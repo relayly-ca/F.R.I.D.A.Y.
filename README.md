@@ -42,6 +42,11 @@ Twelve candidates were rejected, including Khoj, OpenClaw, Open Interpreter, and
 frontend. If you find yourself about to install something that overlaps a row below, read
 that section first.
 
+Candidates that arrived after the spec was written are recorded the same way in
+[ADR-0015](docs/DECISIONS.md) — including Archon, which is a coding harness and not the
+knowledge base and dashboard it used to be, and which is cut for a cloud dependency and an
+overlap with OpenHands rather than for lacking merit.
+
 ## The stack
 
 | Layer | Owner | License | Why it wins the slot |
@@ -51,6 +56,7 @@ that section first.
 | Agent runtime | OpenJarvis | Apache-2.0 | Local-first, DSPy skill optimization, scheduled and continuous agents |
 | Messaging + user model | Hermes Agent | MIT | 23 gateways from one process, Honcho user modeling, bounded memory, Curator |
 | Proactive triage | Adaptive Scrutiny pattern | see below | The decision layer no other project ships |
+| Workflow graph | pydantic-graph + `friday/graph/` | MIT / yours | How multi-step work moves: checks, handoffs, loops, human gates |
 | Autonomous coding | OpenHands | MIT | 72% SWE-bench, sandboxed Docker, 100+ providers via Ollama |
 | Workspace UI | Odysseus | **AGPL-3.0** | Cookbook hardware matching, files, email, deep research |
 | Ambient dashboard | Home Assistant | Apache-2.0 | Wall display, voice satellites, presence, IoT |
@@ -73,6 +79,13 @@ Odysseus is AGPL-3.0 and mautrix, Radicale, notmuch and mbsync are GPL-family. T
 separate processes, so this repository's MIT license is not affected. If you ever link
 against one rather than exec it, that changes.
 
+**Libraries are not layers.** `pydantic-ai` (MIT) is the agent and tool library inside
+`friday/` and `scrutiny/`: typed tools, validated arguments, and guaranteed structured
+output. It does not take a row above, because it is not a daemon and removing it would not
+require replacing a layer. LiteLLM remains transport. Its Logfire integration is **not**
+adopted — Langfuse owns tracing, and a second owner is the failure this whole document is
+organised against. See [ADR-0011](docs/DECISIONS.md).
+
 **Adaptive Scrutiny** is the one layer with a licensing decision attached. OpenAGI ships the
 pattern under **PolyForm Noncommercial**, which is source-available, not open source. For
 personal use you can run it directly. To keep the stack license-clean, implement the pattern
@@ -94,6 +107,11 @@ design is the valuable part.
      +-------------------v-------------------+
      |  SCRUTINY - 7-axis triage (yours)     |
      |  act . ask . watch . ignore . propagate|
+     +-------------------+-------------------+
+                         |
+     +-------------------v-------------------+
+     |  GRAPH - how the work moves           |
+     |  jobs . state . checks . human gates  |
      +-------+-----------------------+-------+
              |                       |
    +---------v---------+   +---------v---------+
@@ -137,6 +155,49 @@ and dispatched to one of **five actions**:
 Scoring rejects low-value signals **before the expensive model is invoked**. That is the
 difference between an assistant that pings you forty times a day and one you trust. It is
 also cheap: the 4B router does the scoring.
+
+One axis is under review. OpenAGI's own repository lists `repetition` as its seventh axis,
+not `conflict`; the only source for `conflict` is the same blog section 4 of the spec warns
+about by name. Nothing changes until it is settled — see [ADR-0014](docs/DECISIONS.md), which
+is Proposed rather than Accepted.
+
+## The graph
+
+Scrutiny decides whether a signal is worth acting on. It says nothing about **how the work
+then moves**, and until that has an owner it accretes as ad-hoc Python, differently each
+time.
+
+A graph is jobs connected by arrows with shared state moving between them. Reserve one for
+work with multiple steps, multiple sources, parallel paths, checks, risks, or approvals —
+and use the smallest graph that raises quality. An oversized graph is harder to reason about
+than the code it replaced.
+
+`pydantic-graph` types the nodes, the edges and the state. `friday/graph/` owns the three
+things it does not provide:
+
+- **Checkpoints** after every node, so a run has a resumable position.
+- **Resumption**, so a supervisor budget kill resumes rather than restarts. That is what
+  makes killing a task cheap enough to actually do.
+- **The human gate**, which is not a new concept: it is scrutiny's `ask`, through the same
+  dispatch into the same inbox. There is exactly one place a human is asked.
+
+Two rules bind every graph.
+
+**The writer is never the checker.** Any node that writes to the vault or the index has a
+distinct checker in front of it, run by a different agent. A single model grading its own
+answer inflates its confidence, and "the digest is confidently wrong" is a failure this
+repository had already written down before it had anywhere to put the fix.
+
+**Graph definitions live in `agent/core/`.** She writes skills, tools, prompts and configs.
+A graph is a loop that runs things, so she does not write it — the same boundary, enforced
+the same way, by the filesystem.
+
+Beside that sits the **ratchet**: every logged correction can be promoted into a permanent
+rule in the threshold table. Promotion proposes a diff and never applies it. The table stays
+hand-maintained, which is what makes it correctable; the ratchet just does the tedious part
+of working out which rule was wrong, on which scores, how often.
+
+See [ADR-0012](docs/DECISIONS.md) and [ADR-0013](docs/DECISIONS.md).
 
 ## Memory
 
