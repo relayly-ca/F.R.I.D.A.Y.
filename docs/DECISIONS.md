@@ -29,6 +29,9 @@ Format: Context / Decision / Consequences / Date.
 | 0013 | The ratchet, and the writer is never the checker | spec §10 | Accepted |
 | 0014 | The seventh axis, and whether there is an eighth | spec §4 | **Proposed** |
 | 0015 | Candidates evaluated and cut, August 2026 | spec §3 | Accepted |
+| 0016 | The ambient dashboard is two layers: Home Assistant and a wall surface | **extends spec §1** | Accepted |
+| 0017 | The vault is Obsidian-compatible | spec §7 | Accepted |
+| 0018 | STT stays large-v3-turbo; the satellites do not transcribe | spec §1 | Accepted |
 
 ---
 
@@ -710,5 +713,162 @@ tells you whether a future version of the project would change the answer.
   sharp: nothing in them may become a runtime dependency.
 - ADR-0001's bar was applied to every row above. In no case was "I need one feature from
   project X" treated as sufficient.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0016: The ambient dashboard is two layers: Home Assistant and a wall surface
+
+**This ADR extends spec §1** by splitting one row into two. No incumbent is removed.
+
+**Context**
+
+Spec §1 gives one row to Home Assistant and lists four responsibilities on it: "Wall display,
+voice satellites, presence, IoT."
+
+Three of those four are device concerns and Home Assistant is unambiguously the right owner:
+ESP32 satellites running ESPHome in each room, presence detection, and everything with a
+relay in it. That is what Home Assistant is for and nothing else in the stack comes close.
+
+The fourth is not a device concern. Spec §5 says what the wall display is actually for:
+
+> **Reactive status visualization.** [...] Functional progress indication disguised as
+> spectacle. Whatever your dashboard looks like, make the visual reflect actual agent state.
+
+That is a view onto **agent** state — which graph is running, which node it is on, what is
+waiting at a human gate, what scrutiny decided in the last hour and under which rule. Home
+Assistant's dashboard is built to render entities and their states. Expressing a paused graph
+node or a `floor`-rate trend as an HA entity is fighting the tool, and the result is the
+failure spec §5 names by heart: a display that animates on a timer instead of reflecting
+anything, which you stop trusting within a week.
+
+ADR-0001 anticipates this case explicitly. Adding something that overlaps an existing row
+needs an ADR that "either replaces the incumbent outright or argues that the layer is
+actually two layers." This is the second one.
+
+**Decision**
+
+Split the row.
+
+- **Home Assistant** keeps voice satellites, presence and IoT. ESP32 boards running ESPHome,
+  one per room, streaming audio to the server. HA is the device control plane and the only
+  thing that talks to hardware.
+- **A wall surface** — Next.js, Tailwind, shadcn/ui — owns the display of agent state. It
+  reads the state stream (`friday/output/state.py`), renders running graphs, active loops,
+  the inbox of `ask` items, and the current mode. Mounted on a wall tablet. It binds
+  loopback and is reached over the mesh like everything else.
+
+The layout is a table architecture rather than a card grid, because what is being shown is
+rows of things with a status: graph runs, loops, pending gates, recent decisions and the rule
+that produced each. Cards are for dashboards where the tiles are unrelated; these are not.
+
+**Consequences**
+
+- One more thing to build and keep running, and it is a frontend, which is the part of a
+  system most likely to rot while the daemon underneath keeps working. It stays small.
+- The wall surface renders and does not command. Anything consequential initiated from the
+  wall goes through scrutiny's `ask` like any other request, and the tablet is not an
+  authenticated principal — a tablet on a wall is reachable by anyone in the room, which is
+  the same threat model the Resemblyzer gate exists for (spec §5, §9).
+- Odysseus keeps the Workspace UI row and does not overlap this. Odysseus is where you sit
+  down and work; the wall is what you glance at from the doorway. If they ever converge, one
+  of them is wrong and this ADR is superseded rather than edited.
+- The state stream becomes an interface with a consumer, so it must be versioned rather than
+  changed freely.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0017: The vault is Obsidian-compatible
+
+**Context**
+
+Spec §7 makes the vault tier 3: markdown in `daily/ projects/ people/ ideas/`, written by the
+consolidation loop and **editable by you**. That last clause is load-bearing and currently
+has no tooling behind it. `docs/weeks/W3.md` already relies on it — the stated fix for a
+confidently wrong digest is to correct the note by hand — and "open the file in an editor"
+is a thin answer for a corpus heading toward thousands of notes.
+
+Obsidian reads a directory of markdown files. It adds nothing to the format, requires no
+import, and does not own the data. DataviewJS turns YAML frontmatter into queryable
+structure, so "every open question from the last month" or "everything tagged with this
+project that has not been touched since March" becomes a query against notes the
+consolidation loop already writes.
+
+**Decision**
+
+The vault is Obsidian-compatible. Concretely, and this is the whole of it:
+
+- Every generated note carries YAML frontmatter with at least `source`, `created`, `updated`,
+  `tags`, and the provenance fields spec §7 already requires.
+- Links between notes use `[[wikilink]]` form, which is what makes the people and projects
+  directories navigable rather than just organised.
+- Nothing Obsidian-specific is ever *required* to read the vault. No plugin is a dependency,
+  no `.obsidian/` directory is authoritative, and the vault remains a directory of plain
+  markdown that `cat` and `grep` fully understand.
+
+**Consequences**
+
+- Costs approximately nothing. It is a frontmatter convention plus not fighting a format.
+- The frontmatter is useful independently of Obsidian: it is exactly the provenance spec §7
+  requires be carried, in a form the indexer can parse without heuristics.
+- `.obsidian/` is gitignored. Workspace state is not vault content.
+- The file-ingestion source already watches the vault and must not index `.obsidian/`, which
+  the existing `exclude_globs` in `config/sources.yaml` needs extended for.
+- This does not make Obsidian an owner of anything. If it disappeared tomorrow the vault
+  would be unchanged.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0018: STT stays large-v3-turbo; the satellites do not transcribe
+
+**Context**
+
+Spec §1 names `faster-whisper large-v3-turbo` and puts it in the always-resident set. A
+latency-first reading argues for a much smaller model — `base.en` — on the grounds that CPU
+inference is what blows the 800ms budget in spec §6.
+
+The premise is right and it resolves the question in the other direction. The reason to reach
+for `base.en` is CPU inference. With the GPU actually in play — which ADR-0016 makes
+structural, because ESPHome satellites stream audio to the server and do not transcribe
+anything themselves — there is exactly one STT process, it is on the GPU, and `large-v3-turbo`
+is already the fast variant. It is not the model that is spending the budget.
+
+`docs/weeks/W4.md` step 8 gives the breakdown, and STT is 100-250ms of an 800ms budget.
+End-of-speech detection is the largest line and the most tunable, at 100-300ms of VAD
+hangover that is usually set conservatively at 500-800ms. That is where the time is.
+
+What `base.en` costs is precision on proper nouns, and for this system that is not a quality
+preference, it is a correctness failure with a tail. Mishearing "Sam" as "Sarah" does not
+produce a slightly worse answer; it produces a confident retrieval against the wrong person's
+notes. Every downstream layer — retrieval, novelty scoring, the people directory — then works
+correctly on a wrong premise, which is the hardest class of bug to see.
+
+**Decision**
+
+`large-v3-turbo` stays the default, on the GPU, resident. `config/friday.toml` keeps
+`stt_model` configurable, and the choice is decided by measurement rather than by argument:
+W4 step 8 already requires a per-stage benchmark, and if STT is genuinely the line item
+blowing the budget, that benchmark says so and this ADR is superseded with a number attached.
+
+Satellites capture and stream. They do not transcribe, do not run wake-word detection that
+matters, and hold no model. One STT, one GPU, one place to tune.
+
+**Consequences**
+
+- The 800ms budget is met by fixing VAD hangover, streaming the first TTS sentence, and
+  starting retrieval on the partial transcript — all of which W5 step 3 already lists, and
+  none of which trade accuracy away.
+- Satellites stay cheap and replaceable. An ESP32 that only captures audio can be replaced
+  by any other thing that captures audio.
+- Every room's audio crosses the network to the server. That network is the mesh and never
+  the internet (spec §9), and it is worth being explicit that this is a microphone array in
+  your house streaming to one box.
+- If a satellite ever needs to run local wake-word detection to cut bandwidth, that is a
+  bandwidth decision and not an STT decision, and it does not reopen this.
 
 **Date**: 2026-08-07

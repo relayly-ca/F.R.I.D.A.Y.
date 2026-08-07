@@ -59,7 +59,8 @@ overlap with OpenHands rather than for lacking merit.
 | Workflow graph | pydantic-graph + `friday/graph/` | MIT / yours | How multi-step work moves: checks, handoffs, loops, human gates |
 | Autonomous coding | OpenHands | MIT | 72% SWE-bench, sandboxed Docker, 100+ providers via Ollama |
 | Workspace UI | Odysseus | **AGPL-3.0** | Cookbook hardware matching, files, email, deep research |
-| Ambient dashboard | Home Assistant | Apache-2.0 | Wall display, voice satellites, presence, IoT |
+| Devices and presence | Home Assistant | Apache-2.0 | ESP32/ESPHome voice satellites, presence, IoT |
+| Wall surface | Next.js + Tailwind + shadcn/ui | yours | Agent state, running graphs, pending gates. Renders; never commands |
 | STT | faster-whisper large-v3-turbo | MIT | |
 | Wake | openWakeWord + clap detect | Apache-2.0 | Two triggers |
 | Speaker auth | Resemblyzer voiceprint | MIT | Voice as an auth factor, not just input |
@@ -208,7 +209,9 @@ Four tiers.
    everything else grows from.
 2. **Episodic log** — `episodic.db`, append-only, never edited, only compressed.
 3. **Vault** — markdown: `daily/` `projects/` `people/` `ideas/`. Written by the
-   consolidation loop, editable by you.
+   consolidation loop, editable by you. Obsidian-compatible: YAML frontmatter and
+   `[[wikilinks]]`, so DataviewJS can query it. Nothing Obsidian-specific is ever required
+   to read it ([ADR-0017](docs/DECISIONS.md)).
 4. **Index** — Qdrant + FTS5, hybrid retrieval with `bge-reranker-v2-m3` on top.
 
 Retrieval: expand query, parallel keyword and vector at top 30 each, dedupe, rerank to top 8,

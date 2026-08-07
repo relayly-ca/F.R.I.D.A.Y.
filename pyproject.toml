@@ -14,6 +14,18 @@ dependencies = [
     "pydantic-settings>=2.3",
     "pyyaml>=6.0",
 
+    # The agent and tool library. ADR-0011: a library, not a layer owner - it is not a
+    # daemon and removing it would not require replacing a layer. Typed tools, validated
+    # arguments, and the strict structured output that scrutiny/score.py's parse_score
+    # contract describes.
+    #
+    # Its Logfire integration is NOT used. Langfuse owns tracing (spec section 1) and a
+    # second owner is ADR-0001. Logfire is also hosted by default, which fails section 9.
+    "pydantic-ai>=1.0",
+    # Node, edge and state typing for the graph layer. ADR-0012. Ships with pydantic-ai;
+    # named explicitly because friday/graph/ imports it directly and the version matters.
+    "pydantic-graph>=1.0",
+
     # Model transport. Spec section 8: LiteLLM is transport, the frameworks are policy.
     # The `openai` client here is the wire format to LiteLLM on loopback, not a cloud
     # dependency.
