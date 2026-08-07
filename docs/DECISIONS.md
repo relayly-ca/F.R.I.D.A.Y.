@@ -38,6 +38,7 @@ Format: Context / Decision / Consequences / Date.
 | 0022 | OpenAGI does not replace Hermes | spec §1, §7 | Accepted |
 | 0023 | Pipecat owns the voice pipeline transport; the policy stays ours | spec §1, §6 | Accepted |
 | 0024 | Radicale and Odysseus do not overlap; ADR-0015 was wrong | **corrects ADR-0015** | Accepted |
+| 0025 | Hardware profiles; nothing in the architecture depends on the box | spec §1, §8 | Accepted |
 
 ---
 
@@ -1415,5 +1416,81 @@ docs/                   spec §4 quote annotated; README, W7, ADR-0002 cross-ref
 ```
 
 Nothing above is done yet.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0025: Hardware profiles; nothing in the architecture depends on the box
+
+**Context**
+
+The box this is developed and tested on is not the box it will run on. The development box
+has a weak GPU; the target has 24 GB and spec §1's model table assumes it.
+
+The failure to avoid is obvious once stated and easy to walk into: writing the system against
+the target and being unable to run any of it until the target exists, or writing it against
+the dev box and hard-coding a small model somewhere that has to be found later.
+
+The mechanism to avoid both is already in the stack and did not need inventing. Spec §8:
+"LiteLLM is transport, the agent frameworks are policy." Aliases are indirection. Nothing in
+`friday/` names a model — it names `daily`, `fast`, `embed`, `rerank`. A profile changes what
+those resolve to and touches no calling code.
+
+**Decision**
+
+Two profiles in `config/profiles.yaml`, selected by `FRIDAY_PROFILE` or `/etc/friday/profile`,
+defaulting to `target`. The default matters: a forgotten setting must degrade toward the
+correct system, not away from it.
+
+| | `dev` | `target` |
+|---|---|---|
+| VRAM floor | 0 — CPU-only permitted | 23000 MB |
+| `daily` | the small model | Qwen 3.6 27B @ Q4 |
+| `fast` | the small model | 4B router |
+| `embed` / `rerank` | **bge-m3 / bge-reranker-v2-m3** | **identical** |
+| Resident | fast, embed, rerank | + whisper, kokoro |
+
+In `dev`, `daily` and `fast` deliberately resolve to the same model. On a small box a
+separate 27B is not weaker, it is absent, and pretending otherwise produces something that
+swaps to disk and looks broken rather than slow.
+
+**A profile may change what runs. It may never change what is true.** `config/profiles.yaml`
+carries both lists explicitly. The second one — the scorer's empty tool list, `agent/core`
+ownership, allowlists and budgets, sensitivity routing, the bounded-memory block, the
+writer/checker split, the speaker-gate floor, loopback-only binding — is not profile-scoped,
+because a profile that could relax any of those would be a way to disable a security property
+by choosing a config file.
+
+**The part that makes dev genuinely useful, rather than a consolation.**
+
+`bge-m3` and `bge-reranker-v2-m3` are small and identical across both profiles. Retrieval
+quality is a property of those two models plus the pipeline, and both are the same on either
+box. So:
+
+- **Retrieval is comparable across profiles.** A chunking, expansion, fusion or rerank change
+  that helps on dev helps on target. W3 — the long pole, the least exciting and most
+  load-bearing week — is fully testable on a weak GPU.
+- **Answer quality is not.** A 4B answering from perfect context is not a 27B answering from
+  perfect context, and that difference is invisible in a retrieval score.
+
+Therefore the 20/25 gate in spec §6 is a **target-profile gate**. Passing it on dev means
+retrieval works; it does not mean the system is ready. Eval results record the profile that
+produced them, and comparing a dev score against a target score is a bug in the report rather
+than a finding.
+
+**Consequences**
+
+- Almost everything is buildable and testable before the target box exists: ingestion,
+  chunking, the retrieval pipeline, the rule table, the graph engine, the supervisor, the
+  tool allowlists, the voice path. What cannot be judged early is how good her answers are.
+- Preflight reads the profile instead of a fixed floor, so `MIN_VRAM_MB` stops being an
+  override people set to silence it and becomes a property of a named profile.
+- `install/03-models.sh` downloads the profile's set. On dev that is a few GB rather than
+  forty, which is most of W1's wall-clock time.
+- Two profiles and not five. A profile per GPU tier would put spec §1's model table in a
+  second place where it can drift. The table stays the source; a profile picks a row.
+- Moving to the target box is: set the profile, run `install/03-models.sh`, restart. The
+  vault, the index, the eval set and every config file move unchanged.
 
 **Date**: 2026-08-07

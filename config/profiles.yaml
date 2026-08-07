@@ -1,0 +1,133 @@
+# Hardware profiles. ADR-0025.
+#
+# The same repository runs on the box you test on and the box she lives on. Nothing in the
+# architecture is allowed to depend on which one it is, and the mechanism that makes that
+# true is already in the stack: spec section 8's aliases are indirection. A profile changes
+# what `daily` POINTS AT. It does not change a single line of calling code.
+#
+# Select with the FRIDAY_PROFILE environment variable, or persist it:
+#
+#   echo 'target' | sudo tee /etc/friday/profile
+#
+# Default is `target`. A profile must be chosen deliberately to get the weaker one, so a
+# forgotten setting degrades toward the correct system rather than away from it.
+
+version: 1
+default: target
+
+profiles:
+
+  # --- dev ---------------------------------------------------------------------
+  # A box that cannot hold a 27B model. Everything runs; generation is weaker and slower.
+  #
+  # What this is FOR: writing and testing every layer of the system. Ingestion, chunking,
+  # the retrieval pipeline, the rule table, the graph engine, the supervisor, the voice
+  # path - none of them care how big the daily driver is.
+  dev:
+    describe: >
+      Small or no GPU. Aliases collapse onto small models. Use for development and for
+      everything in weeks 2, 3 and 5 that is not about answer quality.
+
+    min_vram_mb: 0          # CPU-only is permitted here. It will be slow and it will work.
+    min_disk_gb: 40
+
+    # `daily` and `fast` deliberately point at the SAME model. On a small box a separate
+    # 27B is not weaker, it is absent, and pretending otherwise produces a system that
+    # swaps to disk and looks broken rather than slow.
+    aliases:
+      daily:  fast-model
+      fast:   fast-model
+      coder:  fast-model
+      vision: null          # not served in dev. Nothing calls it before the deferred phase.
+      embed:  bge-m3
+      rerank: bge-reranker-v2-m3
+
+    # The two that must NOT be downgraded, and this is the whole reason dev is useful.
+    #
+    # bge-m3 and bge-reranker-v2-m3 are small - they run on a weak GPU or on CPU. Retrieval
+    # quality is a property of THESE models plus the pipeline, and both are identical across
+    # profiles. So the eval measures the same thing on both boxes (see `eval` below).
+    resident: [fast, embed, rerank]
+
+    # Voice is heavier than it looks on a weak box: whisper and Kokoro both want to stay
+    # loaded. Off by default here; turn it on deliberately when testing the voice path.
+    voice_default: false
+
+    llama_args:
+      # No --n-gpu-layers. llama.cpp falls back to CPU cleanly; forcing layers onto a card
+      # that cannot hold them fails at load with a message that scrolls past.
+      ctx_size: 8192
+
+  # --- target ------------------------------------------------------------------
+  # The box she lives on. Spec section 1's 24 GB row.
+  target:
+    describe: >
+      24 GB VRAM. Qwen 3.6 27B @ Q4 as the daily driver, with the ~6 GB resident set
+      alongside it. This is the profile every "done when" in docs/weeks/ is written against.
+
+    min_vram_mb: 23000
+    min_disk_gb: 120
+
+    aliases:
+      daily:  daily-model
+      fast:   fast-model
+      coder:  coder-model      # on demand; evicts daily
+      vision: vision-model     # on demand; evicts daily
+      embed:  bge-m3
+      rerank: bge-reranker-v2-m3
+
+    # Spec section 1: "Always resident (~6 GB)". That is a LATENCY budget, not a memory
+    # note - anything loaded per utterance costs more than the whole 800ms budget.
+    resident: [fast, embed, rerank, whisper, kokoro]
+
+    voice_default: true
+
+    llama_args:
+      ctx_size: 16384
+      n_gpu_layers: 999
+
+# --- What a profile may and may not change -----------------------------------
+# The list matters more than the values. A profile is allowed to change what runs; it is
+# never allowed to change what is true.
+constraints:
+
+  # Changeable per profile.
+  may_change:
+    - which model an alias resolves to
+    - which models stay resident
+    - llama.cpp context size and GPU layer count
+    - preflight VRAM and disk floors
+    - whether the voice path starts by default
+
+  # NOT changeable per profile. Every one of these is a security or correctness property,
+  # and a profile that could relax one would be a way to turn the system off by choosing a
+  # config file - which is exactly the shape of thing ADR-0004 exists to prevent.
+  may_not_change:
+    - the scorer having no tools (ADR-0006)
+    - agent/core being owned by fridaysup (ADR-0004)
+    - per-agent tool allowlists and budgets (spec section 9)
+    - sensitivity routing pinning local (ADR-0008)
+    - bounded memory blocking the write path (ADR-0007)
+    - the writer never being the checker (ADR-0013)
+    - the speaker gate threshold floor (ADR-0019)
+    - loopback-only binding, no port forwarding (spec section 9)
+
+# --- The eval, across profiles -----------------------------------------------
+# The subtle part, and getting it wrong wastes a week.
+eval:
+  # RETRIEVAL is measured by the same bge-m3 and bge-reranker-v2-m3 in both profiles, over
+  # the same corpus, through the same pipeline. A retrieval change that helps on dev helps
+  # on target. So week 3's work - chunking, expansion, fusion, rerank thresholds - is fully
+  # testable on a weak box, and week 3 is the long pole.
+  retrieval_comparable: true
+
+  # ANSWER QUALITY is not. A 4B model answering from perfect context is not a 27B model
+  # answering from perfect context, and the difference is invisible in a retrieval score.
+  answers_comparable: false
+
+  # So the 20/25 gate in spec section 6 is a TARGET-profile gate. Passing it on dev means
+  # retrieval is working; it does not mean the system is ready. Results record the profile
+  # they were produced under, and comparing across profiles is a bug in the report rather
+  # than a finding.
+  gate_profile: target
+  record_profile_in_results: true

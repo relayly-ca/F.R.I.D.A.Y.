@@ -14,24 +14,60 @@ the three things that genuinely want a container. Never `apt`, never `sudo pip`.
 
 ---
 
-## 1. Hardware
+## 1. System requirements
 
-### The server
+Two profiles. ADR-0025: the same repository runs on both, and nothing in the architecture
+depends on which. Select with `FRIDAY_PROFILE`, or persist it:
 
-One machine, on all the time. This is the whole system; everything else is a peripheral.
+```bash
+echo 'dev' | sudo tee /etc/friday/profile      # or: target
+```
+
+Default is `target`. You have to choose `dev` deliberately, so a forgotten setting degrades
+toward the correct system rather than away from it.
+
+### The two profiles
+
+| | `dev` | `target` |
+|---|---|---|
+| **Purpose** | Build and test every layer | The box she lives on |
+| **GPU** | Anything, including none | 24 GB VRAM |
+| **VRAM floor (preflight)** | 0 | 23000 MB |
+| **System RAM** | 16 GB | 32 GB min, 64 GB recommended |
+| **Disk** | 40 GB | 250 GB min, 1 TB recommended |
+| **Weights to download** | ~4 GB | ~40 GB |
+| **`daily` resolves to** | the small model | Qwen 3.6 27B @ Q4 |
+| **`embed` / `rerank`** | bge-m3 / bge-reranker-v2-m3 | **identical** |
+| **Voice on by default** | no | yes |
+
+**What you can build on `dev`:** ingestion, chunking, the whole retrieval pipeline, the
+scrutiny rule table, the graph engine, the supervisor, tool allowlists, the voice path. That
+is most of the system, and it includes W3, which is the long pole.
+
+**What you cannot judge on `dev`:** how good her answers are. Retrieval is measured by
+bge-m3 and the reranker, which are identical across profiles, so a retrieval change that
+helps on dev helps on target. Generation is not. **The 20/25 gate is a target-profile gate.**
+Eval results record the profile that produced them, and comparing across profiles is a bug in
+the report rather than a finding.
+
+Moving from dev to target is: change the profile, run `install/03-models.sh`, restart. The
+vault, the index, the eval set and every config file move unchanged.
+
+### The target server
 
 | Part | Minimum | Recommended | Why |
 |---|---|---|---|
 | GPU | 12 GB VRAM | **24 GB** | Spec §1's table. 24 GB is the sweet spot: Qwen 3.6 27B @ Q4 plus ~6 GB resident |
 | System RAM | 32 GB | 64 GB | Qdrant, Docker, the bridges and the indexer all want room |
-| Disk | 250 GB NVMe | 1 TB NVMe | Weights are ~40 GB, the index and mail grow without bound until consolidation bounds them |
+| Disk | 250 GB NVMe | 1 TB NVMe | Weights are ~40 GB; the index and mail grow until consolidation bounds them |
 | Network | Wired | Wired | Satellites stream audio continuously. Wifi jitter is latency you cannot get back |
+| OS | Arch Linux | Arch Linux | pacman/paru/uv throughout. Never apt |
 
 **Full-disk encryption is not optional and cannot be added later.** Spec §9 lists it, and it
 is an install-time decision. This box will hold your mail, your messages, your calendar and a
-vector index of your life. Set it up when you install Arch or accept that you never will.
+vector index of your life. Set it up when you install Arch, or accept that you never will.
 
-VRAM decides the daily driver, from spec §1:
+VRAM decides the daily driver, from spec §1. The profile picks a row; the table is the source:
 
 | VRAM | Daily driver |
 |---|---|
@@ -42,13 +78,50 @@ VRAM decides the daily driver, from spec §1:
 | 48 GB | Qwen3-Coder-Next |
 | 128 GB | gpt-oss-120b |
 
-Below 24 GB, set `MIN_VRAM_MB` so preflight stops arguing with you:
+### The dev box
 
-```bash
-echo 'MIN_VRAM_MB=15000' | sudo tee /etc/friday/preflight.env
-```
+Anything running Arch with 16 GB of RAM and 40 GB free. A GPU helps and is not required —
+llama.cpp falls back to CPU, and on `dev` the profile omits `--n-gpu-layers` so it does so
+cleanly rather than failing at load.
 
-### Voice satellites
+Expect roughly: 4B model on CPU at a few tokens per second, embeddings and reranking fast
+enough not to notice. Slow to converse with, entirely adequate to develop against.
+
+### Ports
+
+Everything binds `127.0.0.1`. Spec §9: no port forwarding, and preflight fails the box on
+anything listening off-loopback.
+
+| Port | Owner | Profile |
+|---|---|---|
+| 3000 | Langfuse | both |
+| 4000 | LiteLLM | both |
+| 5232 | Radicale | both |
+| 6333 | Qdrant | both |
+| 7424 | Conduit | both |
+| 8080 | llama-server, `daily` | both |
+| 8081 | llama-server, `fast` | target only (dev aliases onto 8080) |
+| 8082 | llama-server, `embed` | both |
+| 8083 | llama-server, `coder` | target, on demand |
+| 8084 | llama-server, `vision` | target, on demand |
+| 8085 | llama-server, `rerank` | both |
+| 8123 | Home Assistant | deferred, ADR-0020 |
+
+### Accounts and network
+
+| Need | Why |
+|---|---|
+| A Matrix client on your phone | How you text her. W1 |
+| A mesh: WireGuard or Headscale | Spec §9, never a port forward. W1 |
+| One messaging account to bridge | WhatsApp, Signal or Telegram. **One only** until it has survived a week |
+| A mail account reachable by IMAP | W4 |
+| A CalDAV client (DAVx5) | W2 |
+
+## 1b. Optional hardware
+
+All of this is deferred by ADR-0020 and none of it is needed to have a working FRIDAY.
+
+### Voice satellites — deferred
 
 One per room you want to talk in. ADR-0018: **satellites capture and stream, they do not
 transcribe.** There is one STT process and it is on the server's GPU. That keeps satellites

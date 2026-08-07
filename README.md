@@ -10,6 +10,33 @@ bug. This README is a map of the spec, not a replacement for it.
 
 Written for the person who maintains this at 3am. That person is you.
 
+## Requirements
+
+Two hardware profiles, and the same repository runs on both. Nothing in the architecture
+depends on which box it is: spec section 8's aliases are indirection, so a profile changes
+what `daily` points at and touches no calling code ([ADR-0025](docs/DECISIONS.md)).
+
+| | `dev` | `target` |
+|---|---|---|
+| GPU | anything, including none | **24 GB VRAM** |
+| RAM / disk | 16 GB / 40 GB | 32-64 GB / 250 GB-1 TB |
+| Weights | ~4 GB | ~40 GB |
+| `daily` | the small model | Qwen 3.6 27B @ Q4 |
+| `embed` / `rerank` | bge-m3 / bge-reranker-v2-m3 | **identical** |
+
+```bash
+echo 'dev' | sudo tee /etc/friday/profile      # default is target
+```
+
+Because the embedding and reranking models are the same in both, **retrieval is comparable
+across profiles** — a change that helps on dev helps on target, and week 2-3, the long pole,
+is fully testable on a weak GPU. Answer quality is not comparable, so the 20/25 gate is a
+target-profile gate.
+
+Arch Linux throughout. Full-disk encryption is an install-time decision and cannot be added
+later. Full bill of materials, every package, and what is deliberately absent:
+[`docs/INSTALL.md`](docs/INSTALL.md).
+
 ## Status
 
 Rebuilding from the spec. The build order in section 6 of the spec is the schedule, and it
@@ -59,10 +86,11 @@ overlap with OpenHands rather than for lacking merit.
 | Workflow graph | pydantic-graph + `friday/graph/` | MIT / yours | How multi-step work moves: checks, handoffs, loops, human gates |
 | Autonomous coding | OpenHands | MIT | 72% SWE-bench, sandboxed Docker, 100+ providers via Ollama |
 | Workspace UI | Odysseus | **AGPL-3.0** | Cookbook hardware matching, files, email, deep research |
-| Devices and presence | Home Assistant | Apache-2.0 | ESP32/ESPHome voice satellites, presence, IoT |
+| Devices and presence | Home Assistant | Apache-2.0 | ESP32/ESPHome voice satellites, presence, IoT. **Deferred past W8** |
 | Wall surface | Next.js + Tailwind + shadcn/ui | yours | Agent state, running graphs, pending gates. Renders; never commands |
-| STT | faster-whisper large-v3-turbo | MIT | |
-| Wake | openWakeWord + clap detect | Apache-2.0 | Two triggers |
+| Voice pipeline | Pipecat | BSD-2-Clause | VAD, turn-taking, streaming, barge-in phase 1. Transport only; the policy stays ours |
+| STT | faster-whisper large-v3-turbo | MIT | One process, on the GPU. Satellites stream and never transcribe |
+| Wake | openWakeWord + clap detect | Apache-2.0 | Two triggers. A clap cannot false-trigger from speech |
 | Speaker auth | Resemblyzer voiceprint | MIT | Voice as an auth factor, not just input |
 | TTS | Kokoro-82M / Chatterbox-Turbo | Apache-2.0 / MIT | Fast default, cloned voice when it matters |
 | Vectors | Qdrant | Apache-2.0 | |
@@ -140,7 +168,7 @@ Every incoming signal — a message, a calendar change, an observed pattern, the
 brainstorm session — is scored on **seven axes**:
 
 ```
-urgency . impact . novelty . risk . confidence . specificity . conflict
+urgency . impact . novelty . repetition . risk . confidence . specificity
 ```
 
 and dispatched to one of **five actions**:
@@ -157,10 +185,12 @@ Scoring rejects low-value signals **before the expensive model is invoked**. Tha
 difference between an assistant that pings you forty times a day and one you trust. It is
 also cheap: the 4B router does the scoring.
 
-One axis is under review. OpenAGI's own repository lists `repetition` as its seventh axis,
-not `conflict`; the only source for `conflict` is the same blog section 4 of the spec warns
-about by name. Nothing changes until it is settled — see [ADR-0014](docs/DECISIONS.md), which
-is Proposed rather than Accepted.
+Seven graded axes, all floats, all thresholded. `conflict` used to be listed among them and
+is not an axis — `config/scrutiny.yaml` always declared it `type: bool` while the other six
+were floats, and the rule table used it once, alone, with no threshold. It is a **flag**, and
+it moved to `context` beside `speaker_verified`. `repetition` took the seventh slot, matching
+OpenAGI's source, and it is the axis that finds work worth automating
+([ADR-0014](docs/DECISIONS.md)).
 
 ## The graph
 
