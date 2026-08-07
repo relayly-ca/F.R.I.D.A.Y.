@@ -34,6 +34,7 @@ Format: Context / Decision / Consequences / Date.
 | 0018 | STT stays large-v3-turbo; the satellites do not transcribe | spec §1 | Accepted |
 | 0019 | Barge-in: stop acoustically, classify semantically, suspend rather than kill | spec §5, §6 | Accepted |
 | 0020 | Vision and IoT defer past W8; ambient means one room first | **reorders spec §6** | Accepted |
+| 0021 | ADR-0003 re-examined: OpenAGI stays out, for ADR-0001 and not for the licence | **amends ADR-0003** | Accepted |
 
 ---
 
@@ -1044,5 +1045,110 @@ Vision and Home Assistant / IoT move out of the numbered weeks into a phase afte
 - Nothing in the dependency chain moved, so no later week gains a prerequisite it did not
   have. If a future decision wants to defer something that *is* on the chain — memory, the
   eval set, the supervisor — this ADR is not the precedent for it.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0021: ADR-0003 re-examined: OpenAGI stays out, for ADR-0001 and not for the licence
+
+**This ADR amends ADR-0003.** Same conclusion, corrected reasoning, and the correction
+matters because the reason a decision was made is what tells you whether a future version of
+the project would change it.
+
+**Context**
+
+ADR-0003 chose to implement Adaptive Scrutiny rather than take a dependency on OpenAGI, and
+leaned on the licence: "This keeps every license in the §1 table open source." Re-examined
+against the project as it actually is, that argument is weaker than it was written, and two
+findings run the other way.
+
+**The licence is not a blocker.** Spec §1's own preamble says "Every component below is
+either open source **or source-available**," and spec §4 says of PolyForm Noncommercial: "For
+personal use that's fine and you can run it directly." The spec permits this. ADR-0003 raised
+the bar above what the spec set, without saying it was doing so.
+
+**The dispatch is already deterministic.** This is the objection that would have been
+decisive and it does not apply. OpenAGI scores, then maps scores to one of five actions in
+code; the model does not choose the action. That is the same separation ADR-0006 rests on,
+arrived at independently, and it is a point in the project's favour that ADR-0003 never
+credited.
+
+So the honest position is that this was closer than ADR-0003 made it sound.
+
+**What actually decides it**
+
+OpenAGI is not a scrutiny library. It is an always-on daemon on `127.0.0.1:43210` that owns:
+
+| OpenAGI owns | Already owned here by |
+|---|---|
+| Embedded agent runtime (`abi-runtime.js`) | OpenJarvis |
+| Gateways: Telegram, Twilio, HTTP, web UI | Hermes, 23 of them |
+| Tiered memory: short, medium, long-term "Lava" | The four tiers of spec §7 |
+| Cron scheduler | OpenJarvis scheduled agents, systemd timers |
+| Skills system | OpenJarvis skills, Hermes Curator |
+| MCP registry and execution | `friday/tools/`, per-agent allowlists |
+| Dashboard / SSE | Odysseus, and the wall surface (ADR-0016) |
+| **Adaptive Scrutiny** | **the one thing we want** |
+
+Adopting it for the scrutiny layer means installing a second agent runtime, a second gateway
+process, a second memory system, a second scheduler, a second skills system, a second MCP
+registry and a second dashboard, in order to get one component.
+
+That is spec §0, verbatim, and it is the sentence the whole document is organised around:
+"The failure mode of this project is installing four things that each do 60% of the job and
+spending your weekends reconciling them."
+
+ADR-0001 is the standing rule and it is unambiguous here. This is not one overlapping row, it
+is seven.
+
+**On the combination**
+
+Separating just the scrutiny component is "theoretically" possible —
+`src/directional-adaptive-scrutiny.js` is a discrete module — but the orchestration that
+threads signals through scrutiny, memory and propagation lives in the runtime, not the
+module. Extracting it means porting JavaScript into a Python stack and then maintaining a
+fork of one file from a project we are not otherwise running. That is strictly more work than
+the 200 lines, and it carries an upstream we cannot merge from.
+
+And the cost side has moved since ADR-0003 was written. `scrutiny/policy.py` is implemented
+with 45 tests passing. The dispatch switch, the restricted expression evaluator and the rule
+table exist. What remains is the scorer and the table loader. The "200 lines to write and
+own" that ADR-0003 traded away is now mostly written, so adoption today buys less than it
+would have bought at the start.
+
+**Decision**
+
+OpenAGI stays out of the stack, on ADR-0001 grounds. ADR-0003's conclusion stands and its
+licence argument is withdrawn — for personal use the licence is fine, and the spec says so.
+
+**Two things are taken.**
+
+**`repetition`.** OpenAGI's source lists its seventh axis as `repetition`, not `conflict`, and
+it is the axis that finds work worth automating — which is the entire proactive half of what
+this system is for. This is ADR-0014, still Proposed, and this ADR strengthens the case for
+resolving it.
+
+Note a detail that sharpens ADR-0014: OpenAGI's own **marketing page** says `conflict` while
+its own **source file** says `repetition`. So the spec did not take the axis from a
+third-party blog alone — the upstream project's front page says it too. When a project's site
+and its code disagree, the code is the project.
+
+**OpenAGI as an oracle, not a dependency.** Running it standalone, outside the stack, fed the
+same signals, and comparing its verdicts against our table is a legitimate and cheap way to
+tune the thresholds — spec §4 says the design is the valuable part, and this is how you get
+the design's judgement without taking the daemon. It is a development tool, in the same
+category as the coleam00 repositories in ADR-0015, and it must never become a runtime
+dependency.
+
+**Consequences**
+
+- No upstream, and no upstream improvements. That cost is real and was real in ADR-0003; the
+  correction period for our threshold table is however long it takes us to notice, and the
+  corrections ledger plus the ratchet (ADR-0013) is the whole mitigation.
+- If FRIDAY ever stops being personal use, PolyForm NC would have blocked adoption anyway,
+  so this decision is also the durable one. That is a consequence rather than the reason.
+- If OpenAGI ever ships Adaptive Scrutiny as a standalone library with no daemon, this ADR is
+  superseded rather than edited, and the only remaining question would be the licence.
 
 **Date**: 2026-08-07
