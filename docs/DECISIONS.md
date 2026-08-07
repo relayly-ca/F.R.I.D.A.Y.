@@ -42,6 +42,15 @@ Format: Context / Decision / Consequences / Date.
 | 0026 | MCP in both directions, and each is a different risk | spec §9 | Accepted |
 | 0027 | No Supabase; SQLite and Qdrant stay | spec §1, §7 | Accepted |
 | 0028 | The repository is forkable; personal data never enters it | this session | Accepted |
+| 0029 | Prompt assembly order is frozen-then-volatile | spec §7 | Accepted |
+| 0030 | Context management within a run, distinct from memory across runs | spec §7 | Accepted |
+| 0031 | Progressive disclosure for skills and tools | spec §6 | Accepted |
+| 0032 | A secret in the vault outlives the fix | spec §9 | Accepted |
+| 0033 | Scheduled work keeps run records and pauses itself | spec §10 | Accepted |
+| 0034 | Rubrics for tasks, and the grader is not the writer | spec §4 | Accepted |
+| 0035 | Answers cite their sources inline | spec §7 | Accepted |
+| 0036 | The knowledge graph is derived from the vault, not authored beside it | spec §7 | Accepted |
+| 0037 | The vault is OKF-shaped; the schema is ours | spec §7 | Accepted |
 
 ---
 
@@ -1648,5 +1657,438 @@ The repository is forkable. Concretely:
   operator either way.
 - This does not make it a product. There is no support, no compatibility promise, and every
   `# VERIFY:` marker is still the fork's problem to check.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0029: Prompt assembly order is frozen-then-volatile
+
+**Context**
+
+Spec §7 requires three things be present on every turn: `profile.md`, the current date and
+time, and today's calendar. Assembled naively — in the order the spec lists them — that
+places a value that changes every second in front of everything else.
+
+KV-cache reuse is a **prefix match**. Any byte change invalidates everything after it, so a
+datetime at the front means every prompt is a cold prefix, forever. This is a named
+anti-pattern in Anthropic's caching guidance (`datetime.now()` in the system prompt) and
+llama.cpp's prefix cache behaves the same way.
+
+W5 has to find 400ms. This is some of it, for free.
+
+**Decision**
+
+Prompt assembly is ordered by **rate of change**, not by the order spec §7 lists things:
+
+```
+  frozen        system preamble, profile.md, tool definitions      <- cache breakpoint
+  ------------------------------------------------------------
+  volatile      current datetime . today's calendar
+                retrieved chunks . the question
+```
+
+`friday.memory.retrieve.build_context` owns this and it is the only place the order is
+decided. The rule for anything added later: if it changes between two consecutive turns, it
+goes below the line.
+
+**Consequences**
+
+- The tool list must be **deterministic** — sorted, and stable across turns. A per-turn tool
+  set is a cache miss dressed as a feature, which is also why ADR-0026 refuses to adopt a
+  server's advertised tools dynamically.
+- `profile.md` being frozen is now a performance property as well as a design one. An
+  auto-updating profile would invalidate the prefix on every edit; ADR-0007's
+  `auto_apply_proposals: false` already forbids that for a different reason.
+- Verification is a number, not a belief: llama-server reports cache reuse, and a hit rate
+  near zero across identical-prefix turns means something volatile crept above the line.
+- Sensitivity filtering happens inside the retrieval query (ADR-0008), so the frozen prefix
+  never varies by what the caller is allowed to see.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0030: Context management within a run, distinct from memory across runs
+
+**Context**
+
+FRIDAY has four tiers of memory and all four are about persistence *across* sessions. Nothing
+handles a single run growing past its window.
+
+W7's researcher has a 150,000-token budget and a tool allowlist that reads mail, files and
+the index. It will fill its context and then fail — and the supervisor will record a budget
+kill, which is technically correct and diagnostically useless.
+
+Three mechanisms are usually collapsed into one word. They are not the same thing:
+
+| | What it does | Loses |
+|---|---|---|
+| **Clear** | Drops stale tool results and intermediate output | The detail, deliberately |
+| **Compact** | Summarises earlier context into a shorter form | Fidelity, gradually |
+| **Memory** | Persists across runs entirely | Nothing — different axis |
+
+**Decision**
+
+`friday/graph/` owns clear and compact; the memory tiers keep owning persistence.
+
+**Clear first, compact second.** Clearing is deterministic and lossless in the way that
+matters — a tool result already consumed is dead weight, and dropping it costs nothing.
+Compaction is a model call that loses fidelity, so it runs only when clearing was not enough.
+
+**A compaction is a graph node like any other**, which means it checkpoints (ADR-0012) and
+is subject to the writer/checker rule if it writes anything. A run that compacts and then
+dies is resumable from after the compaction.
+
+**Never compact `profile.md` or the injected datetime.** They live above the cache line
+(ADR-0029) and are re-injected whole every turn regardless.
+
+**Consequences**
+
+- The graph state carries a token estimate per node, which the supervisor already needs for
+  budgets — one counter serves both.
+- Compaction is lossy and will occasionally lose the thing that mattered. The mitigation is
+  that the episodic log is untouched: a compacted run can be reconstructed from tier 2.
+- W7's overnight run stops being "it died" and becomes "it compacted twice and finished."
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0031: Progressive disclosure for skills and tools
+
+**Context**
+
+W8's stated failure is a library of four hundred skills where nobody can say whether any of
+them got better. There is a second failure underneath it that arrives sooner: every skill
+description loaded into every prompt.
+
+At thirty skills that is a nuisance. At three hundred it is the whole context window, and it
+lands on the frozen side of ADR-0029's cache line, so it is paid on every turn.
+
+**Decision**
+
+Skills and tools load in two stages. **Names and one-line descriptions** are in context;
+**bodies load on demand** when the description matches the task.
+
+This is the same shape as the `SKILL.md` convention — the description sits in context by
+default, the full file is read when the task calls for it — and it is why `agent/skills/` is
+a directory of folders rather than one file.
+
+Two rules that make it work rather than just sound good:
+
+**Descriptions are the interface.** A skill whose description does not say *when* to use it
+cannot be selected without loading it, which defeats the mechanism. This is the same
+requirement ADR-0026 puts on MCP tool descriptions and it is the part that rots first.
+
+**Loading appends; it never rewrites the prefix.** A loaded skill body goes below the cache
+line with the retrieved chunks. Rewriting the frozen prefix to insert a skill would invalidate
+the cache — the exact thing ADR-0029 exists to prevent.
+
+**Consequences**
+
+- The Curator's job (W8) gains a measurable target: a description that never causes a load
+  is either wrong or the skill is dead.
+- Skill selection becomes a retrieval problem over descriptions, which means it can be wrong,
+  which means it belongs in the corrections ledger like every other classification.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0032: A secret in the vault outlives the fix
+
+**Context**
+
+`docs/weeks/W4.md` handles a credential reaching the index: purge the episodic log, purge
+Qdrant, fix `exclude_globs`, re-run. That is right and it is incomplete.
+
+**The vault is a git repository.** A secret consolidated into a note and committed is in the
+history. `git revert` adds a commit that removes it from the working tree and changes nothing
+about the object that still contains it. Every clone and every backup carries it. Rotating
+the credential is necessary and does not undo the disclosure.
+
+ADR-0005 spends real design effort keeping credentials away from her — root-owned secrets, a
+helper she cannot read, one key per unit. A secret that arrives by the front door and is then
+preserved forever by our own revision control defeats all of it.
+
+**Decision**
+
+`friday.memory.vault` gains a **redact** operation, distinct from delete:
+
+- Removes the content from the working tree **and** rewrites history so the object does not
+  survive in the repository.
+- Preserves an audit record — when it was redacted, which note, which run wrote it — because
+  the fact that a secret was disclosed is exactly what you must not lose.
+- Force-pushes to the Forgejo remote, and the runbook says to treat every clone and every
+  snapshot in `backups/` as compromised until re-taken.
+
+Redaction is a **human action**. She does not redact her own vault: a process that can
+rewrite its own history can hide what it did, which is the same argument as ADR-0004 applied
+to the record rather than the loop.
+
+**Consequences**
+
+- History rewriting breaks the supervisor's revert-to-pre-run-commit if it happens mid-run.
+  Redaction requires the managed units stopped, which the runbook states.
+- `make backup` snapshots contain the pre-redaction history. The tarballs are the reason the
+  runbook says to re-take them, and the reason it says an untested backup is a belief.
+- This is a real capability she does not have and a human does. That asymmetry is the point.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0033: Scheduled work keeps run records and pauses itself
+
+**Context**
+
+The digest, consolidation and ingest are systemd timers. A timer tells you a unit ran and
+what its exit code was. It does not tell you what the run *did*, and a timer that fails every
+night at 03:00 fails every night at 03:00 forever.
+
+Spec §10 warns that retrieval degrades quietly. A scheduled job degrading quietly is the same
+failure with a schedule attached.
+
+**Decision**
+
+Every scheduled run writes a **run record**: what fired it, when, what it produced — notes
+written, rows consolidated, the resulting graph run id — or a typed error if it produced
+nothing. The record is durable and independent of the journal, because the journal rotates
+and the question "when did the digest last actually work" outlives it.
+
+**Repeated non-recoverable failure pauses the timer** rather than retrying nightly. A missing
+model, a config that no longer validates, a vault that will not commit — none of those fix
+themselves, and the pause goes to the inbox as an `ask`.
+
+Recoverable failures — a locked database, a model still loading — retry on the next tick and
+do not count toward the pause.
+
+**A manual run must be possible while paused.** Testing the fix is the entire point of
+pausing, and a pause you cannot test out of is an outage.
+
+**Consequences**
+
+- One more table, in `scrutiny.db` alongside the decisions ledger — same lifecycle, same
+  append-only shape, and ADR-0027's rule says that is where it belongs rather than in a new
+  file.
+- The distinction between recoverable and non-recoverable has to be made per error, and
+  getting it wrong in the safe direction means retrying forever. Default to recoverable and
+  promote errors to non-recoverable as you meet them.
+- W3's "the vault grows without you writing in it" becomes checkable from a table instead of
+  inferred from `git log`.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0034: Rubrics for tasks, and the grader is not the writer
+
+**Context**
+
+ADR-0013 established that a writer never checks its own work. It did not say what the checker
+checks *against*, and for the consolidator the answer was implicit: does every claim appear
+in the source rows.
+
+That does not generalise. When `propagate` hands a task to the researcher, "done" is
+undefined — the specialist decides for itself when it has finished, which is the same
+inflation ADR-0013 rejects, moved from output quality to completion.
+
+**Decision**
+
+A propagated task carries a **rubric**: explicit criteria, gradeable independently.
+
+The bar is concrete versus vague, and it is the whole difference between a rubric and a
+wish. "A comparison of the March quote against two current ones, with dates and totals" is
+gradeable. "A good summary of the roof situation" is not — and a grader scoring vague
+criteria produces noise that looks like signal.
+
+A **separate grader**, different agent, scores each attempt and returns per-criterion gaps.
+Failing criteria go back as specific work, not as "try again". Bounded iterations, and
+exhausting them ends in `ask` — never in a quiet declaration of success.
+
+**Consequences**
+
+- Writing a rubric is work, and it front-loads thinking that would otherwise happen while
+  reading a disappointing result. That trade is the point.
+- The eval set is the same idea one level up: 25 questions with known answers is a rubric for
+  retrieval, and it is already the model for this.
+- A task with no writable rubric is a signal that it should be `ask` rather than `propagate` —
+  which is what `urgent_and_undetermined_asks` already says from the other direction.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0035: Answers cite their sources inline
+
+**Context**
+
+Spec §7 requires provenance be carried "so she can say 'you told me this in March, it may be
+stale'". `carry_provenance: true` carries it as far as the context window and then it stops:
+the answer is prose, the sources are a list underneath it, and nothing connects a specific
+claim to a specific note.
+
+That gap is where the week-6 novelty cliff lives. "You notice how often she's subtly wrong"
+is hard to act on when checking one claim means re-reading eight chunks to find which one it
+came from.
+
+**Decision**
+
+Claims carry their source inline. A retrieved chunk that produced a claim is named at that
+claim, with its note and its date — not collected in a footer.
+
+Three consequences follow that are worth stating as rules:
+
+- **A claim with no citable source is stated as inference, not as fact.** She knows which
+  chunks she was given; a sentence traceable to none of them is her reasoning, and saying so
+  is the difference between a wrong answer you can catch and one you cannot.
+- **A source older than `stale_after_days` is qualified where it is used.** That is spec §7's
+  sentence, applied at the claim rather than at the response.
+- **Citations are how corrections get cheap.** The path from "that's wrong" to the note that
+  caused it becomes one click, which is what makes W6's maintenance half tractable.
+
+**Consequences**
+
+- More verbose answers. Voice turns suppress inline citation and surface it on request,
+  because reading identifiers aloud is unusable.
+- A model can attribute a claim to the wrong chunk. A citation is a claim about provenance
+  and can be wrong like any other, so it is checkable rather than trusted.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0036: The knowledge graph is derived from the vault, not authored beside it
+
+**Not to be confused with ADR-0012.** That is the **agent** graph — how work moves. This is
+the **knowledge** graph — how facts relate. Same word, different layer, and conflating them
+is the reason this ADR says so in its first line.
+
+**Context**
+
+Spec §7's retrieval is vector plus keyword, fused and reranked. That answers "what did I say
+about the roof" well and hits a ceiling on anything requiring a hop:
+
+> "What did the person who quoted the roof say about timing?"
+
+Vector search finds notes similar to the sentence. It has no representation of *Sam quoted
+the roof*, so it cannot get from the roof project to Sam to what Sam said. It retrieves
+roof-shaped text and hopes the answer is in it. That failure is quiet — the answer looks
+plausible and is assembled from the wrong notes.
+
+The 2026 consensus in the retrieval literature is hybrid: vectors for breadth, graph for
+depth, memory for continuity. Reported gains are material — precision improvements around a
+third, and large token reductions from retrieving a few connected facts instead of many
+similar paragraphs. Treat those numbers as directional; the mechanism is the part to trust.
+
+**What makes this cheap here, and it is the whole decision.**
+
+ADR-0017 already requires `[[wikilinks]]` in every generated note. **Those links are edges.**
+`people/sam.md` linking `projects/roof.md` is an assertion that the two are related, written
+by the consolidation loop as a side effect of a convention adopted for a different reason.
+
+So the graph is not a new corpus to author, a new database to run, or a new thing for her to
+maintain. It is a **projection of the vault** — derived on consolidation, rebuildable from
+scratch at any time, and correct by construction if the vault is correct.
+
+**Decision**
+
+A knowledge graph, **derived** from the vault, never authored independently.
+
+- **Nodes** are vault notes. `people/`, `projects/`, `ideas/`, `daily/` — the four directories
+  spec §7 already names are the node types.
+- **Edges** are wikilinks, plus a small typed set the consolidator can assert explicitly
+  (`mentioned_in`, `attended`, `owns`, `superseded_by`) when the relationship is stronger
+  than "these are related".
+- **Retrieval gains one stage**, inserted where it belongs in spec §7's pipeline:
+
+```
+  expand -> keyword + vector (30 each) -> dedupe
+         -> GRAPH EXPANSION: follow edges 1-2 hops from the entry points
+         -> rerank to 8 -> recency boost
+```
+
+Vector search finds the entry points; the graph reaches what is connected to them. Depth
+capped at two hops — three pulls in the entire vault, because everything in a personal corpus
+is eventually connected to everything.
+
+- **Storage is SQLite**, two tables beside the FTS5 index. ADR-0027 asked for a reason beyond
+  "different concern" before adding a file; this shares the episodic lifecycle and does not
+  get its own. No graph database — a personal vault is thousands of nodes, and a second
+  daemon for a join is ADR-0001.
+- **Rebuildable.** `--rebuild-graph` drops and re-derives from the vault. A corrupt graph is
+  never a data-loss event, which is what makes the whole thing safe to be wrong.
+
+**Timing: W3, and it is gated.** It goes in after the retrieval pipeline is measured, not
+beside it. Build the pipeline, get the eval to 20/25, record that number — *then* add graph
+expansion and re-run. If it does not move the score it comes out. The eval set exists to make
+exactly this decision, and adding two retrieval changes at once means neither can be
+attributed.
+
+**Consequences**
+
+- No new authoring burden and no new daemon. The cost is the expansion stage and a derivation
+  pass on consolidation.
+- Graph expansion widens the candidate set, which the reranker then has to cut back down.
+  `min_rerank_score` is the guard and it matters more with this on, not less.
+- A wrong edge produces a confidently wrong multi-hop answer, and ADR-0035's inline citations
+  are what make that catchable — the answer names the notes it traversed.
+- Sensitivity filtering must apply to traversal, not just to the initial query. An edge from
+  a permitted note to a restricted one is a path around ADR-0008, and filtering after
+  traversal leaks existence through the shape of the result.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0037: The vault is OKF-shaped; the schema is ours
+
+**Context**
+
+The Open Knowledge Format is a specification for storing knowledge as a directory of markdown
+files with YAML frontmatter and explicit links between concepts, git-versioned and
+tool-agnostic. It formalises the "LLM wiki" pattern — an agent maintaining a curated
+knowledge base it continuously reads and improves, rather than re-retrieving raw documents
+every time.
+
+That is spec §7's tier 3 and the consolidation loop, described by someone else. The
+convergence is worth noting because it was independent: the spec did not borrow this.
+
+Two things counsel against depending on it, and both are the same caution spec §4 applies to
+OpenAGI. **The published descriptions disagree with each other** — one source gives the
+required frontmatter as `type` and `title`, another as `id` and `category`. And **the
+canonical specification is not locatable**: the available material is secondary coverage and
+one community tool, not a normative document. A format whose required fields differ by
+write-up is not a format to hard-depend on yet.
+
+**Decision**
+
+Adopt the **shape**; own the **schema**.
+
+The vault stays what ADR-0017 made it — plain markdown, YAML frontmatter, `[[wikilinks]]`,
+git-versioned, readable by `cat` and `grep`. That is already OKF-shaped, and staying
+deliberately close to the convention costs nothing:
+
+- One concept per note, atomic and self-contained.
+- Frontmatter carries a stable identifier, a type, timestamps and provenance — the fields
+  every version of the description agrees on, under the names spec §7 already requires.
+- Links are explicit and bidirectional where the consolidator can determine it, which is what
+  ADR-0036 derives the graph from.
+
+What is **not** adopted: any dependency, any tool, any required field we would have to keep
+in step with a moving specification. If OKF stabilises and a canonical schema appears,
+conforming is a frontmatter migration over a directory of markdown files — a morning's work,
+which is the point of not depending on it now.
+
+**Consequences**
+
+- If OKF becomes the interchange format it intends to be, the vault is portable into it
+  cheaply, and someone else's knowledge base is importable.
+- The vault remains readable with no tooling at all. That property is worth more than
+  conformance and is the reason ADR-0017 refused to require Obsidian either.
+- A third external convention now shapes the vault — Obsidian, OKF, and our own provenance
+  requirement. They agree today. If they diverge, **ours wins**, and the reason is that spec
+  §7 requires provenance and neither of the other two does.
 
 **Date**: 2026-08-07
