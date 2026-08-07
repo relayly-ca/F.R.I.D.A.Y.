@@ -39,7 +39,7 @@ Format: Context / Decision / Consequences / Date.
 | 0023 | Pipecat owns the voice pipeline transport; the policy stays ours | spec §1, §6 | Accepted |
 | 0024 | Radicale and Odysseus do not overlap; ADR-0015 was wrong | **corrects ADR-0015** | Accepted |
 | 0025 | Hardware profiles; nothing in the architecture depends on the box | spec §1, §8 | Accepted |
-| 0026 | MCP in both directions, and each is a different risk | spec §9 | Accepted |
+| 0026 | MCP: inbound Accepted, outbound Proposed with a trigger | spec §9 | **Accepted / Proposed** |
 | 0027 | No Supabase; SQLite and Qdrant stay | spec §1, §7 | Accepted |
 | 0028 | The repository is forkable; personal data never enters it | this session | Accepted |
 | 0029 | Prompt assembly order is frozen-then-volatile | spec §7 | Accepted |
@@ -2090,5 +2090,56 @@ which is the point of not depending on it now.
 - A third external convention now shapes the vault — Obsidian, OKF, and our own provenance
   requirement. They agree today. If they diverge, **ours wins**, and the reason is that spec
   §7 requires provenance and neither of the other two does.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0026 — AMENDMENT: outbound is Proposed, inbound stays Accepted
+
+**Appended, not rewritten.** ADR-0026 accepted both directions in one decision. That was an
+error of granularity: the two have different risk, different value, and only one of them has
+a demonstrated need.
+
+**Inbound stays Accepted.** A read-only MCP server over `memory_read`, `calendar_read` and
+the inbox, bound to loopback, one virtual key per consumer. The risk is low — it exposes data
+the caller is already trusted with, over a socket that does not leave the machine — and the
+value is concrete: Odysseus can query the vault without standing up a second retrieval stack,
+which is ADR-0001 working in our favour rather than against us.
+
+**Outbound moves to Proposed.** Consuming third-party MCP servers was accepted because it was
+architecturally coherent, not because anything needed it. Reviewed against what she already
+has, the case is thin: `search`, `fs_read`, `mail_read`, `memory_read`, `calendar_read`, plus
+OpenJarvis `deep_research` and OpenHands for code. Outbound MCP adds reach into services
+*other than your life* — and the value of this system is that it knows your life.
+
+Every outbound server is also a fresh supply-chain surface: code you did not write, running
+as a process, holding whatever access it was granted. ADR-0006's test applies and a general
+connector does not clear it.
+
+**The trigger, so this is a deferral and not a shrug.** Outbound MCP becomes Accepted when a
+specific named capability is wanted, and:
+
+1. It cannot be served by an existing tool or by `deep_research`.
+2. The server is named, its source is readable, and its advertised tool list is enumerated in
+   the ADR that adopts it — not discovered at runtime.
+3. Everything it touches on the network or the filesystem runs inside the OpenHands container
+   boundary, or it is not adopted (ADR-0010).
+4. It gets its own `tool_catalog` entry with input-pattern matching, never a wildcard grant
+   of what the server advertises (ADR-0010).
+
+"It would be convenient" is not a trigger. "I need X and nothing I have does X" is.
+
+**Unchanged either way.** The `scorer` never gets a tool, inbound or outbound, ever. That is
+ADR-0006 and it is not subject to this or any later amendment.
+
+**Consequences**
+
+- Nothing is deleted. The reasoning that made outbound MCP tractable — registration-time
+  comparison of advertised tools, per-server allowlists, the container requirement — is
+  preserved for whoever adopts one, which is the whole purpose of this log.
+- W5 builds `friday/tools/serve.py` for our own tools and the inbound server. The outbound
+  client is not built, and its absence is a decision rather than an omission.
+- If the trigger is never met, that is a fine outcome and no work was wasted.
 
 **Date**: 2026-08-07
