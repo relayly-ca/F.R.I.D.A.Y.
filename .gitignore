@@ -1,0 +1,55 @@
+# Runtime state. The installer creates /srv/friday; none of it belongs in git.
+# Mirrored here because a dev checkout may create the same names locally.
+vault/
+db/
+work/
+logs/
+models/
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets. Spec section 9: capabilities, not credentials. No secret enters this
+# repository, not even encrypted. The sops recipient config is the sole exception
+# and is tracked explicitly.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.age
+secrets/
+!.sops.yaml
+
+# The eval set is 25 questions about your own life. It is not shareable.
+eval/questions.yaml
+eval/results/
+
+# Agent runtime. She writes here; git does not track what she writes.
+agent/skills/*
+agent/tools/*
+agent/prompts/*
+agent/core/*
+!agent/**/.gitkeep
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# Node
+node_modules/
+dist/
+
+# Editor and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

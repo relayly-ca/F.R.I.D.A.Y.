@@ -1,0 +1,43 @@
+# sops configuration. The only secrets-related file tracked in git, and it contains a
+# public key and no secret material.
+#
+# Spec section 9: "Secrets in age/sops, decrypted per-call by a helper the agent cannot
+# read." This file describes how a human encrypts what that helper reads. It does not
+# authorise committing ciphertext here; encrypted files live under /srv/friday/secrets,
+# outside the repository.
+#
+# Generate the identity once, as root, and never copy it off the machine:
+#
+#   install -d -m 0700 /srv/friday/secrets
+#   age-keygen -o /srv/friday/secrets/age.key
+#   chmod 0600 /srv/friday/secrets/age.key
+#   grep 'public key' /srv/friday/secrets/age.key
+#
+# Then replace the placeholder below. install/preflight.sh fails while it is still there.
+
+keys:
+  - &friday_host age1REPLACE_WITH_YOUR_AGE_PUBLIC_KEY
+
+creation_rules:
+  # Per-unit environment files consumed via systemd EnvironmentFile=.
+  - path_regex: secrets/.*\.env$
+    key_groups:
+      - age: [*friday_host]
+
+  # LiteLLM per-agent virtual keys. Spec section 8 requires one key per agent rather
+  # than a shared master key; Hermes shipped a hardening release patching a LiteLLM
+  # credential exposure.
+  - path_regex: secrets/litellm-keys\.ya?ml$
+    key_groups:
+      - age: [*friday_host]
+
+  # Structured secrets: bridge registrations, service tokens, device keys.
+  - path_regex: secrets/.*\.(ya?ml|json)$
+    encrypted_regex: '^(password|token|secret|key|as_token|hs_token|api_key|access_token)$'
+    key_groups:
+      - age: [*friday_host]
+
+  # Catch-all, so nothing under secrets/ is ever left in plaintext by accident.
+  - path_regex: secrets/.*
+    key_groups:
+      - age: [*friday_host]
