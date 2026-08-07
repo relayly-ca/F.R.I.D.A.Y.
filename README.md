@@ -338,12 +338,23 @@ Four tiers.
    consolidation loop, editable by you. Obsidian-compatible: YAML frontmatter and
    `[[wikilinks]]`, so DataviewJS can query it. Nothing Obsidian-specific is ever required
    to read it ([ADR-0017](docs/DECISIONS.md)).
-4. **Index** — Qdrant + FTS5, hybrid retrieval with `bge-reranker-v2-m3` on top.
+4. **Index** — Qdrant + FTS5, hybrid retrieval with `bge-reranker-v2-m3` on top, plus a
+   **knowledge graph derived from the vault's `[[wikilinks]]`**. The links the consolidation
+   loop already writes *are* the edges, so the graph is a projection of the vault — derived,
+   rebuildable, no new authoring and no new daemon. It answers the questions vector search
+   cannot: "what did the person who quoted the roof say about timing" needs a hop from the
+   project to the person to what they said ([ADR-0036](docs/DECISIONS.md)).
 
-Retrieval: expand query, parallel keyword and vector at top 30 each, dedupe, rerank to top 8,
-recency boost. Always inject the current date and time and today's calendar — local models
+Retrieval: expand query, parallel keyword and vector at top 30 each, dedupe, **graph
+expansion one to two hops**, rerank to top 8, recency boost. Always inject the current date and time and today's calendar — local models
 are hopeless at temporal reasoning otherwise. Always carry source and timestamp, so she can
 say "you told me this in March, it may be stale."
+
+**Assembly order is frozen-then-volatile.** `profile.md` and the tool definitions sit above
+the cache line; the datetime, the calendar and the retrieved chunks sit below it. Section 7
+lists the datetime first, and assembling it in that order puts a value that changes every
+second in front of everything else — which means no prompt ever reuses a cached prefix
+([ADR-0029](docs/DECISIONS.md)).
 
 **Bounded memory beats unbounded.** When memory fills, she must consolidate before saving
 anything new. Scarcity forces curation. This is not nightly compression, and the difference
