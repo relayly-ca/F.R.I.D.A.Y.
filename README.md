@@ -15,19 +15,19 @@ Written for the person who maintains this at 3am. That person is you.
 Rebuilding from the spec. The build order in section 6 of the spec is the schedule, and it
 says **do not reorder**.
 
-| Week | Do | Done when | Status |
-|---|---|---|---|
-| 1 | llama.cpp + LiteLLM + OpenJarvis, `--preset chat-simple` | You chat locally | [ ] |
-| 1 | Conduit + mautrix bridges + Hermes gateway | You text FRIDAY from your phone | [ ] |
-| 2 | Radicale + DAVx5; ingest Matrix db + calendar | She answers "what's my week look like" | [ ] |
-| 2-3 | Memory: vault, Qdrant, FTS5, reranker, **eval set** | 20/25 on your own eval questions | [ ] |
-| 3 | OpenJarvis `monitor_operative` + `morning_digest` | Vault grows without you writing in it | [ ] |
-| 4 | notmuch, files, browser, Home Assistant | Eval score holds after each new source | [ ] |
-| 4-5 | Voice: Whisper to Kokoro, wake word + clap, speaker ID | Under 800ms, hands-free, voice-gated | [ ] |
-| 5 | MCP tools, OpenHands sandbox, **supervisor** | She can act, and you can kill her | [ ] |
-| 6 | Mode detection + brainstorm behavior | She shuts up and takes notes on command | [ ] |
-| 7 | **Adaptive Scrutiny** + bounded specialists | She works overnight, reports at breakfast | [ ] |
-| 8+ | `jarvis optimize skills --policy dspy` + Hermes Curator | Skills improve measurably, not just numerously | [ ] |
+| Week | Guide | Do | Done when | Status |
+|---|---|---|---|---|
+| 1 | [W1](docs/weeks/W1.md) | llama.cpp + LiteLLM + OpenJarvis, `--preset chat-simple` | You chat locally | [ ] |
+| 1 | [W1](docs/weeks/W1.md) | Conduit + mautrix bridges + Hermes gateway | You text FRIDAY from your phone | [ ] |
+| 2 | [W2](docs/weeks/W2.md) | Radicale + DAVx5; ingest Matrix db + calendar | She answers "what's my week look like" | [ ] |
+| 2-3 | [W2](docs/weeks/W2.md), [W3](docs/weeks/W3.md) | Memory: vault, Qdrant, FTS5, reranker, **eval set** | 20/25 on your own eval questions | [ ] |
+| 3 | [W3](docs/weeks/W3.md) | OpenJarvis `monitor_operative` + `morning_digest` | Vault grows without you writing in it | [ ] |
+| 4 | [W4](docs/weeks/W4.md) | notmuch, files, browser, Home Assistant | Eval score holds after each new source | [ ] |
+| 4-5 | [W4](docs/weeks/W4.md), [W5](docs/weeks/W5.md) | Voice: Whisper to Kokoro, wake word + clap, speaker ID | Under 800ms, hands-free, voice-gated | [ ] |
+| 5 | [W5](docs/weeks/W5.md) | MCP tools, OpenHands sandbox, **supervisor** | She can act, and you can kill her | [ ] |
+| 6 | [W6](docs/weeks/W6.md) | Mode detection + brainstorm behavior | She shuts up and takes notes on command | [ ] |
+| 7 | [W7](docs/weeks/W7.md) | **Adaptive Scrutiny** + bounded specialists | She works overnight, reports at breakfast | [ ] |
+| 8+ | [W8](docs/weeks/W8.md) | `jarvis optimize skills --policy dspy` + Hermes Curator | Skills improve measurably, not just numerously | [ ] |
 
 Week 2-3 is the least exciting and the most load-bearing. Voice before memory is the mistake
 everyone makes.
