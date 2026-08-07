@@ -84,7 +84,8 @@ sources:
     poll_interval_s: 120
     sensitivity: vault
     config:
-      roots: [/srv/friday/vault, /home/ak/documents]
+      # Your document roots. The vault is always watched; add your own.
+      roots: [/srv/friday/vault]
       include_globs: ["**/*.md", "**/*.txt", "**/*.org", "**/*.pdf"]
       # A security control, not a performance one. Spec section 9 says she gets
       # capabilities and not credentials; indexing a key would route around that entirely,

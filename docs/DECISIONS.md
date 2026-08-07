@@ -39,6 +39,9 @@ Format: Context / Decision / Consequences / Date.
 | 0023 | Pipecat owns the voice pipeline transport; the policy stays ours | spec §1, §6 | Accepted |
 | 0024 | Radicale and Odysseus do not overlap; ADR-0015 was wrong | **corrects ADR-0015** | Accepted |
 | 0025 | Hardware profiles; nothing in the architecture depends on the box | spec §1, §8 | Accepted |
+| 0026 | MCP in both directions, and each is a different risk | spec §9 | Accepted |
+| 0027 | No Supabase; SQLite and Qdrant stay | spec §1, §7 | Accepted |
+| 0028 | The repository is forkable; personal data never enters it | this session | Accepted |
 
 ---
 
@@ -1492,5 +1495,158 @@ than a finding.
   second place where it can drift. The table stays the source; a profile picks a row.
 - Moving to the target box is: set the profile, run `install/03-models.sh`, restart. The
   vault, the index, the eval set and every config file move unchanged.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0026: MCP in both directions, and each is a different risk
+
+**Context**
+
+MCP is already the tool layer. `config/agents.yaml` carries the `tool_catalog`,
+`friday/tools/serve.py` serves per-agent lists, and W5 builds it. What was never decided is
+the two directions FRIDAY can face.
+
+**Outbound** — FRIDAY *consumes* third-party MCP servers: filesystem, git, fetch, a database,
+whatever someone publishes. This is the tempting one and it is a **supply-chain surface**.
+An MCP server is code you did not write, running as a process, holding whatever access it was
+given. ADR-0006's test applies without modification: does the boundary hold if the server
+does exactly what an attacker wants? For a server that reads your mail, it does not.
+
+**Inbound** — FRIDAY *exposes* herself as an MCP server, so Odysseus, a coding agent, or
+anything else can call her memory and her calendar. Much lower risk: it is a read path into
+data the caller is already trusted with, over loopback.
+
+**Decision**
+
+Both, with different rules.
+
+**Outbound.** Third-party MCP servers are treated as untrusted code, not as tools:
+
+- Each one is a `tool_catalog` entry with its own allowlist, matched on **name and input
+  pattern** (ADR-0010), never a wildcard grant of everything a server advertises.
+- A server's advertised tool list is **data, not configuration**. It is compared against the
+  allowlist at registration; new tools appearing after an upgrade are refused rather than
+  adopted, because a server that grows a capability is indistinguishable from one that was
+  replaced.
+- Anything touching the network or the filesystem runs in the OpenHands container boundary
+  or not at all. In-process policy is what ADR-0010 rejected OpenCode for.
+- `scorer` never gets one. `tools: []` is the narrow point the security model rests on
+  (ADR-0006) and it stays empty forever.
+
+**Inbound.** A read-only MCP server over `memory_read`, `calendar_read` and the inbox, bound
+to loopback, one virtual key per consumer. No `vault_write`, no `shell`, no `git`. A caller
+that wants FRIDAY to *do* something goes through scrutiny like any other signal, which is the
+whole point of having a triage layer.
+
+**Consequences**
+
+- The allowlist gains a registration-time check it did not need when every tool was ours.
+- Adding an outbound server is a config change plus an ADR if it reaches anything sensitive,
+  and "it is just an MCP server" is not an argument — it is a process with your data.
+- The inbound server means Odysseus can query the vault without a second retrieval stack,
+  which is ADR-0001 working in our favour for once.
+- Built in W5 with the rest of the tool layer. Nothing is needed before then.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0027: No Supabase; SQLite and Qdrant stay
+
+**Context**
+
+Whether the storage layer wants something Supabase-shaped, self-hosted: Postgres, auth,
+realtime, storage, REST, and pgvector in one box.
+
+Taken at face value the answer is immediate — Supabase would replace **two** rows of the
+spec §1 table (SQLite+FTS5, Qdrant) and add three things this system does not have a use
+for. Auth is a single user gated by a voiceprint and a mesh. Storage is a markdown vault.
+A REST API to your own data on your own machine is a layer between you and a file.
+
+The question worth actually asking is the smaller one hiding inside it: **would Postgres with
+pgvector beat SQLite plus Qdrant?** That is a fair question and the answer is still no, for
+reasons that are about operations rather than features:
+
+- SQLite is one file. `make backup` is a `tar`, and a consistent snapshot is a file copy.
+  Postgres is a daemon with a dump procedure, a WAL, a version upgrade path, and a tuning
+  surface — on a box whose entire premise is being fixable at 3am by one person.
+- Zero ops is a feature here, not a limitation. Spec §0's whole argument is against
+  accreting things that need weekend attention.
+- pgvector's real advantage is transactional consistency between vectors and rows. Our
+  vectors are *derived*: the episodic log and the vault are the sources of truth, and the
+  index is rebuildable from them. A rebuildable derivative does not need a transaction.
+
+**Decision**
+
+Storage stays as spec §1 has it: SQLite + FTS5 for structured and keyword, Qdrant for
+vectors, markdown for the vault. No Postgres, no Supabase.
+
+**One real problem is acknowledged rather than dismissed.** The SQLite files have multiplied:
+`episodic.db`, `sources.db`, `scrutiny.db`, `litellm.db`, the graph checkpoints, `skills.db`.
+That is sprawl, and it arrived one reasonable decision at a time.
+
+The rule going forward: **a new `.db` file needs a reason that is not "it is a different
+concern."** Files split when they have different *lifecycles* — `episodic.db` is durable and
+`sources.db` is a 30-day landing zone, which is a real difference. `scrutiny.db` and a future
+`skills.db` are both append-only ledgers with the same lifecycle and belong together.
+Consolidating them is a W7 cleanup, not a W1 one.
+
+**Consequences**
+
+- No auth layer, ever, on the storage tier. The boundaries are the mesh, the voiceprint and
+  the filesystem, and adding a third would be a fourth thing doing 60% of a job.
+- The realtime need — the wall surface watching agent state — is served by
+  `friday/output/state.py` as a stream, not by a database subscription.
+- If the corpus ever genuinely outgrows SQLite, that is a measurement and this ADR is
+  superseded with the number attached. Spec §10 predicts trouble at 10k *documents*, which is
+  a retrieval problem the reranker addresses, not a storage-engine problem.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0028: The repository is forkable; personal data never enters it
+
+**Context**
+
+Whether this repo should be structured so someone else can fork it, or whether it is one
+person's install.
+
+It was already close, by accident rather than design: `.gitignore` keeps out
+`vault/`, `db/`, `eval/questions.yaml`, `eval/results/`, secrets and agent-written files. The
+two things that survive are the ones that matter most — `eval/questions.yaml` is 25 questions
+about your life, and the vault is your life.
+
+But two tracked files carried personal values: `principal = "ak"` in `config/friday.toml` and
+`/home/ak/documents` in `config/sources.yaml`. Small, and exactly the kind of thing that makes
+a fork start with a confusing diff.
+
+**Decision**
+
+The repository is forkable. Concretely:
+
+- **Tracked config ships generic.** `principal = "CHANGEME"`, and `sources.yaml` watches only
+  the vault. `install.sh` has a "Make it mine" step that fills in the name and offers the
+  system timezone.
+- **`timezone` is prompted for, not defaulted quietly.** UTC left in place makes every
+  calendar answer wrong by a fixed offset, and it reads as a retrieval problem for about two
+  days. The dashboard flags it as `warn` rather than `done`.
+- **No personal data enters the repository, ever** — not in a config, not in an example, not
+  in a test fixture. `eval/questions.example.yaml` is generic and gates nothing.
+- **The spec and the ADR log are the fork's real value.** Someone forking this gets the
+  reasoning, which is the part that took the time. The code is downstream of it.
+
+**Consequences**
+
+- A fork's first run is `bash install.sh`, and the personalisation step is a dashboard row
+  rather than a README instruction someone skips.
+- `principal = "CHANGEME"` fails nothing at load, deliberately: the system works without a
+  name and is slightly generic, which is the right amount of consequence.
+- ADRs referring to "you" and "your mail" read fine in a fork, because the reader is the
+  operator either way.
+- This does not make it a product. There is no support, no compatibility promise, and every
+  `# VERIFY:` marker is still the fork's problem to check.
 
 **Date**: 2026-08-07

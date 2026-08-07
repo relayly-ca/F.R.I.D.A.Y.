@@ -150,6 +150,13 @@ detect() {
     S[mesh]=done; D[mesh]="configured"
   else S[mesh]=todo; D[mesh]="WireGuard or Headscale - never a port forward"; fi
 
+  # personalisation: tracked config ships generic (ADR-0028)
+  if grep -q 'principal = "CHANGEME"' "$REPO/config/friday.toml"; then
+    S[personal]=todo; D[personal]="principal and timezone not set"
+  elif grep -q '^timezone = "UTC"' "$REPO/config/friday.toml"; then
+    S[personal]=warn; D[personal]="timezone still UTC - calendar answers will be wrong"
+  else S[personal]=done; D[personal]="$(grep -oP '^principal = "\K[^"]+' "$REPO/config/friday.toml")"; fi
+
   # profile.md - tier 1, hand written, and never generated
   if [[ -f "$ROOT/vault/profile.md" ]]; then
     if grep -q 'Delete this stub text' "$ROOT/vault/profile.md" 2>/dev/null; then
@@ -176,6 +183,7 @@ dashboard() {
   ui_status "${S[upstream]}" "9  Upstream projects" "${D[upstream]}"
 
   ui_header "Yours - the installer cannot do these"
+  ui_status "${S[personal]}" "name + timezone"   "${D[personal]}"
   ui_status "${S[profile]}"  "vault/profile.md"  "${D[profile]}"
   ui_status "${S[weights]}"  "model repo ids"    "${D[weights]}"
   ui_status "${S[mesh]}"     "mesh + Matrix"     "${D[mesh]}"
@@ -230,6 +238,33 @@ step_secrets() {
   fi
 }
 
+step_personalise() {
+  ui_header "Making it yours"
+  # Tracked config ships generic so the repo is forkable (ADR-0028). This is the one step
+  # that writes your name into it, and it is idempotent.
+  local cur; cur="$(grep -oP '^principal = "\K[^"]+' "$REPO/config/friday.toml" || echo CHANGEME)"
+  if [[ "$cur" == "CHANGEME" ]]; then
+    local who; who="$(ui_input "What should she call you?")"
+    [[ -n "$who" ]] && sed -i "s/^principal = \"CHANGEME\"/principal = \"$who\"/" "$REPO/config/friday.toml" \
+      && ui_ok "principal = $who"
+  else
+    ui_ok "principal = $cur"
+  fi
+
+  local tz; tz="$(grep -oP '^timezone = "\K[^"]+' "$REPO/config/friday.toml" || echo UTC)"
+  if [[ "$tz" == "UTC" ]]; then
+    local sys; sys="$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
+    ui_note "Timezone is UTC. A wrong one makes every calendar answer wrong in a way that"
+    ui_note "looks like a retrieval problem for about two days."
+    if [[ "$sys" != "UTC" ]] && ui_confirm "Use this system's timezone ($sys)?"; then
+      sed -i "s|^timezone = \"UTC\"|timezone = \"$sys\"|" "$REPO/config/friday.toml"
+      ui_ok "timezone = $sys"
+    fi
+  else
+    ui_ok "timezone = $tz"
+  fi
+}
+
 step_profile_md() {
   ui_header "vault/profile.md"
   ui_doc "Spec section 11, and the last line of the whole document: **you write this by hand.**
@@ -262,6 +297,7 @@ report_manual() {
   [[ "${S[weights]}"  != "done" ]] && todo+=("Model repo ids: edit the table at the top of install/03-models.sh. Spec section 1 says verify current picks before downloading, so the script refuses to run rather than fetching something wrong.")
   [[ "${S[upstream]}" != "done" ]] && todo+=("Upstream projects: run step 9, or see /tmp/friday-manual-steps.txt if it already ran.")
   [[ "${S[mesh]}"     != "done" ]] && todo+=("The mesh: WireGuard or Headscale. Spec section 9 - the phone reaches Conduit over the mesh or not at all. Never a port forward.")
+  [[ "${S[personal]}" != "done" ]] && todo+=("Name and timezone: run \"Make it mine\". A wrong timezone makes every calendar answer wrong in a way that reads as a retrieval problem.")
   [[ "${S[profile]}"  != "done" ]] && todo+=("vault/profile.md: you write it by hand. Tier 1 of four, injected into every prompt. Not generated, and that is not a limitation.")
 
   # Conduit and the bridge are genuinely interactive: registering accounts and linking a
@@ -316,6 +352,7 @@ while true; do
     "Change profile (currently: $PROFILE)" \
     "Preflight (reads, changes nothing)" \
     "What still needs me" \
+    "Make it mine (name, timezone)" \
     "Write vault/profile.md" \
     "What gets installed, and why" \
     "Quit")"
@@ -333,6 +370,7 @@ while true; do
     "Change profile"*) choose_profile ; detect ;;
     "Preflight"*)      bash "$REPO/install/preflight.sh" || true ;;
     "What still needs me") report_manual ;;
+    "Make it mine"*)   step_personalise ; detect ;;
     "Write vault"*)    step_profile_md ; detect ;;
     "What gets installed"*)
       if [[ $UI_HAS_GUM -eq 1 ]]; then gum pager < "$REPO/docs/INSTALL.md"

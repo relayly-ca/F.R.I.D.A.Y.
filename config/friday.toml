@@ -7,7 +7,8 @@
 # cannot read.
 
 [general]
-principal = "ak"
+# Your name, as she should think of you. install.sh fills this in.
+principal = "CHANGEME"
 timezone = "UTC"            # set to your zone; calendar answers are wrong otherwise
 log_level = "info"
 # Logging full prompts logs retrieved vault content into the journal. Debug only.
@@ -66,6 +67,13 @@ clap_to_wake = true
 # reflex mid-sentence.
 clap_exit_phrase = "stand down"
 
+# Spec section 5 and 9: Resemblyzer gate on every voice command. Below this cosine
+# similarity, consequential actions are refused and the refusal is spoken.
+speaker_threshold = 0.75
+require_speaker_match = true
+# Spec section 6: under 800ms, end of speech to first audio out.
+latency_budget_ms = 800
+
 # --- Barge-in. ADR-0019. Built in W6. ---------------------------------------
 # Two phases with two deadlines, and conflating them is the mistake this section exists to
 # prevent. Stopping her is acoustic and immediate; working out what you meant is semantic and
@@ -106,13 +114,6 @@ suspend_to_checkpoint = true
 # a command. Anyone in the room can pause her - that is physical and fine. Only a verified
 # speaker can change what she is doing.
 require_speaker_match_to_redirect = true
-# Spec section 5 and 9: Resemblyzer gate on every voice command. Below this cosine
-# similarity, consequential actions are refused and the refusal is spoken.
-speaker_threshold = 0.75
-require_speaker_match = true
-# Spec section 6: under 800ms, end of speech to first audio out.
-latency_budget_ms = 800
-
 [output]
 # Spec section 5, from cc-hermes-cc: the model decides WHERE the answer goes. System
 # questions answered by voice with no window; "where is X" opens a map tile; "show me X"
