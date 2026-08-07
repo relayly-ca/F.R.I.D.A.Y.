@@ -110,8 +110,10 @@ sources:
       exclude_url_patterns: ["^https?://(localhost|127\\.0\\.0\\.1)", "banking", "health"]
 
   homeassistant:
+    # ADR-0020: deferred past W8. Kept rather than deleted - the configuration below was
+    # reasoned about once and re-deriving it later is more work than a disabled entry.
     module: friday.ingest.homeassistant
-    week: 4
+    week: 9
     enabled: false
     poll_interval_s: 60
     sensitivity: any

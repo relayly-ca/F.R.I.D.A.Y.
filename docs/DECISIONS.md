@@ -33,6 +33,7 @@ Format: Context / Decision / Consequences / Date.
 | 0017 | The vault is Obsidian-compatible | spec §7 | Accepted |
 | 0018 | STT stays large-v3-turbo; the satellites do not transcribe | spec §1 | Accepted |
 | 0019 | Barge-in: stop acoustically, classify semantically, suspend rather than kill | spec §5, §6 | Accepted |
+| 0020 | Vision and IoT defer past W8; ambient means one room first | **reorders spec §6** | Accepted |
 
 ---
 
@@ -977,5 +978,71 @@ building them apart.
 - This generalises past voice: "stop" typed into Matrix while an overnight specialist is
   running is the same dispatch against the same checkpoint. That generalisation is free and
   is not built in W6.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0020: Vision and IoT defer past W8; ambient means one room first
+
+**This ADR reorders spec §6**, which says in bold: **do not reorder.** That sentence is the
+reason this is an ADR and not a scheduling note, and the argument below has to clear it
+rather than route around it.
+
+**Context**
+
+The goal for the first working system is text, voice and ambient presence. Vision and the
+Home Assistant / IoT layer are wanted *after* she is functional, not before.
+
+Spec §6 currently puts Home Assistant in week 4 as the fourth ingestion source, and ADR-0016
+puts ESP32/ESPHome satellites alongside it. Deferring both moves work out of the numbered
+weeks.
+
+**What "do not reorder" is actually protecting.** The spec says it once and explains it once,
+in the same paragraph: "Voice before memory is the mistake everyone makes. Week 2-3 is the
+least exciting and the most load-bearing." The ordering constraint is a **dependency chain** —
+memory before voice, memory before tools, memory before scrutiny — and the failure it
+prevents is building the exciting layer on an empty vault.
+
+Home Assistant is not on that chain in either direction. As an ingestion source it is a leaf:
+nothing retrieves better because home telemetry is indexed, and W4's rule is "eval score holds
+after each new source", which holds over three sources exactly as it holds over four. As a
+surface it is downstream of everything. Vision is the same: the `vision` alias is one
+llama-server env file that nothing calls yet.
+
+So this reorders §6 without touching what §6's warning is about. That is the argument, and it
+would not hold for deferring memory, the eval set, or the supervisor.
+
+**Decision**
+
+Vision and Home Assistant / IoT move out of the numbered weeks into a phase after W8.
+
+- **W4 has three sources, not four**: notmuch, files, browser. Its per-source eval gate is
+  unchanged and applies to three.
+- **Voice satellites defer.** Ambient in the interim means **one room**: a microphone and
+  speakers attached to the server, with the wake word, the clap trigger and barge-in all
+  working exactly as designed. W4 already specifies desk audio as the pre-satellite path, so
+  this is not new work, it is the existing work standing alone for longer.
+- **The wall surface stays in W6.** It is Next.js reading the state stream and it does not
+  depend on Home Assistant for anything (ADR-0016 split the row precisely so that this is
+  true). A wall tablet is optional; the surface is worth having on any screen.
+- **The `vision` alias stays configured and unused.** One env file, no weight downloaded, no
+  cost. Removing it and adding it back later is more work than leaving it.
+
+**Consequences**
+
+- **The AEC requirement transfers to the desk microphone.** ADR-0019 makes echo cancellation
+  a hard requirement for barge-in, and the reason the ESP32-S3-BOX-3 was named is that it has
+  it onboard. Without satellites, the desk setup must supply it: a conferencing microphone
+  with hardware AEC, or software AEC via `webrtc-audio-processing` / `speexdsp` in the audio
+  path. This is the one thing the deferral makes *harder* rather than simply later, and it is
+  worth solving before W6 rather than discovering it there.
+- Ambient in one room is genuinely ambient and is also genuinely less than the design. She is
+  present where the microphone is, and nowhere else.
+- `config/sources.yaml` keeps the `homeassistant` entry with `enabled: false` and its `week:`
+  marker becomes 9. Deleting it would lose the configuration that was already reasoned about.
+- Nothing in the dependency chain moved, so no later week gains a prerequisite it did not
+  have. If a future decision wants to defer something that *is* on the chain — memory, the
+  eval set, the supervisor — this ADR is not the precedent for it.
 
 **Date**: 2026-08-07
