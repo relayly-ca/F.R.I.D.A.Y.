@@ -12,18 +12,26 @@ Written for the person who maintains this at 3am. That person is you.
 
 ## Install
 
-One command, from a bare Arch box to a running week 1:
+One command, from a bare Arch box to a running week 1. **Two front ends, pick either:**
 
 ```bash
-git clone <this repo> friday && cd friday && bash install.sh
+git clone <this repo> friday && cd friday
+
+bash install-guided.sh    # linear walkthrough - explains each step before running it
+bash install.sh           # dashboard and menu - shows everything, you pick
 ```
 
-Do not prefix it with `sudo` — it elevates itself, and several steps (`makepkg`, `uv`) refuse
-to run as root and need to know who invoked them.
+Do not prefix either with `sudo` — they elevate themselves, and several steps (`makepkg`,
+`uv`) refuse to run as root and need to know who invoked them.
 
-It opens a dashboard showing what is done and what is not, and it is safe to quit and re-run
-at any point. Every step is idempotent, so a re-run picks up where you stopped rather than
-starting over.
+Both share `install/steps.sh`, so they run identical code and cannot drift apart. **Guided**
+is better on a fresh box: nine steps, each explained before it runs, with progress, an
+estimate, and retry/skip/shell recovery when something fails. **Dashboard** is better once
+the box is partly built and you want to run one thing.
+
+Safe to quit and re-run at any point. Every step is idempotent, so a re-run picks up where
+you stopped rather than starting over — which matters, because the first run usually finds
+something.
 
 ```
   done   1  Packages              llama.cpp, uv, sops present
@@ -39,9 +47,10 @@ starting over.
 Useful variables:
 
 ```bash
-FRIDAY_PROFILE=dev bash install.sh     # pick the profile up front
-FRIDAY_YES=1       bash install.sh     # no prompts, for a re-run
-FRIDAY_STEP=models bash install.sh     # run one step and stop
+FRIDAY_PROFILE=dev bash install-guided.sh   # pick the profile up front
+FRIDAY_YES=1       bash install-guided.sh   # accept every prompt
+FRIDAY_FROM=venv   bash install-guided.sh   # resume from a named step
+FRIDAY_STEP=models bash install.sh          # dashboard: run one step and stop
 ```
 
 **It tells you what it cannot do.** Four things need a human, and the dashboard tracks each
@@ -120,7 +129,9 @@ target-profile gate.
 
 Arch Linux throughout. Full-disk encryption is an install-time decision and cannot be added
 later. Full bill of materials, every package, and what is deliberately absent:
-[`docs/INSTALL.md`](docs/INSTALL.md).
+[`docs/INSTALL.md`](docs/INSTALL.md). Why each of them was chosen, down to why
+`python-passlib` is on the list and what breaks without it:
+[`docs/CHOICES.md`](docs/CHOICES.md).
 
 ## Status
 
