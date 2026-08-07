@@ -32,6 +32,7 @@ Format: Context / Decision / Consequences / Date.
 | 0016 | The ambient dashboard is two layers: Home Assistant and a wall surface | **extends spec §1** | Accepted |
 | 0017 | The vault is Obsidian-compatible | spec §7 | Accepted |
 | 0018 | STT stays large-v3-turbo; the satellites do not transcribe | spec §1 | Accepted |
+| 0019 | Barge-in: stop acoustically, classify semantically, suspend rather than kill | spec §5, §6 | Accepted |
 
 ---
 
@@ -870,5 +871,111 @@ matters, and hold no model. One STT, one GPU, one place to tune.
   your house streaming to one box.
 - If a satellite ever needs to run local wake-word detection to cut bandwidth, that is a
   bandwidth decision and not an STT decision, and it does not reopen this.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0019: Barge-in: stop acoustically, classify semantically, suspend rather than kill
+
+**Context**
+
+You cannot currently interrupt her. She speaks a full response and you wait, and the absence
+of barge-in is the loudest "I am talking to a machine" tell in the whole interaction — louder
+than latency, because a slow human is still a human and one that cannot be interrupted is
+not.
+
+Spec §5's interaction ideas are all about making the surface feel right and none of them
+cover this. Spec §6's 800ms budget measures the wrong edge for it: 800ms is end of speech to
+first audio out, and barge-in is measured from **you starting to speak** to **her stopping**.
+
+There are two problems here and conflating them is the mistake. Stopping her is an acoustic,
+real-time problem with no model in it. Working out what you meant is a semantic problem that
+cannot begin until you have finished the sentence. They have different deadlines by an order
+of magnitude and they must not be built as one thing.
+
+The second problem is the one with teeth. When you interrupt, what you said is one of:
+
+| Kind | Example | What must happen |
+|---|---|---|
+| **Correction** | "no, the *other* Sam" | Same task, amended parameters, resume |
+| **Refinement** | "and add the calendar link" | Same task, more scope, resume |
+| **Abort** | "stop", "never mind" | Kill the task. Do not resume |
+| **New task** | "actually, what's the weather" | Suspend the old one, start a new one |
+| **Not addressed to her** | you talking to someone in the room | Resume as if nothing happened |
+| **Backchannel** | "mm-hm", "right", "yeah" | Not an interruption. Keep going |
+
+Backchannels are worth naming explicitly. They are extremely common in real speech, and a
+system that treats "mm-hm" as an interruption feels twitchy in a way that is hard to
+diagnose because each individual instance looks like a reasonable response.
+
+**Decision**
+
+**Two phases, two deadlines.**
+
+*Phase 1, acoustic, under 200ms, no model.* VAD runs during playback. Speech detected while
+she is talking **pauses** TTS immediately. This is deterministic and it is the only part
+inside the tight deadline. Acoustic echo cancellation is a hard requirement — without it her
+own output re-enters the microphone and she interrupts herself, which is the failure that
+makes people give up on full-duplex and go back to muting the mic during playback.
+
+*Phase 2, semantic, after end of speech.* Transcribe, then the `router` agent from
+`config/agents.yaml` — `fast`, `tools: []`, temperature 0 — classifies the utterance into one
+of the six kinds above, against the in-flight task as context. It emits a **kind and a
+confidence, never an action**. Python dispatches. This is ADR-0002's separation applied
+unchanged, and it needs no new agent, no new axis and no new action.
+
+**Pause, do not kill.** TTS pauses at the interruption point rather than being discarded.
+A backchannel or unaddressed speech resumes from exactly there. This is what makes being
+wrong cheap, and being wrong is guaranteed.
+
+**Suspend, do not abandon.** A new task checkpoints the in-flight one rather than discarding
+it — which is why this is a **graph feature with a voice trigger** and not a voice feature.
+ADR-0012 already specifies checkpointing after every node and resumption after a supervisor
+kill. A correction resumes the run from its checkpoint with amended state; a new task leaves
+the old run checkpointed and resumable; "where were we" comes back to it. None of that
+machinery is new.
+
+**Ambiguity resolves to `ask`, never to a guess.** "What about Thursday?" is genuinely
+ambiguous between correcting the day and asking a new question, and no amount of prompt
+tuning removes that — the utterance is ambiguous, not the classifier. Below a confidence
+threshold she asks one short clarifying question. One question is dramatically cheaper than
+silently doing the wrong thing to the right task.
+
+**An unverified speaker cannot redirect a task.** Spec §9: the Resemblyzer gate applies to
+every voice command, and an interruption is a command. Someone else in the room saying
+"actually, delete it instead" pauses her — anyone can pause her, that is fine and physical —
+and cannot change what she is doing. This is `unverified_speaker_asks` in
+`config/scrutiny.yaml` reused, not a new rule.
+
+**Every classification is a correction candidate.** Logged to the same ledger as scrutiny
+corrections, with the utterance, the in-flight task, the kind chosen and the kind you meant.
+ADR-0013's ratchet then applies to it directly. Spec §10 already requires logging corrections
+from day one, and this is the single best-defined instance of it in the system.
+
+**Built in W6, not W5.** It needs the graph layer from W5 to be solid, W5 is already the
+heaviest week in the schedule and marked as likely to split, and barge-in is an
+interaction-model concern, which is what W6 is for. The deciding argument is that W6's mode
+detection is the *same shape of problem* — same `router` agent, same classify-then-dispatch-
+deterministically pattern, same corrections ledger. Building them together is cheaper than
+building them apart.
+
+**Consequences**
+
+- **AEC becomes a hardware requirement**, not a nice-to-have. ESP32-S3-BOX-3 has it onboard,
+  which is now a reason to prefer it. A bare board with an I2S microphone and no AEC cannot
+  do full-duplex, and this is worth knowing before ordering four of them.
+- **`clap_exit_phrase = "ok"` collides with the most common English backchannel** and must
+  change. "ok" said mid-response is overwhelmingly a backchannel, not a request to return to
+  standby, and no classifier should be asked to separate those. Pick an exit phrase that
+  nobody says by reflex.
+- A pause that never resumes is worse than no barge-in, because she stops mid-sentence and
+  simply never finishes. Resume-on-unaddressed needs a timeout and a test.
+- The classifier sees in-flight task context, which may contain ingested untrusted text. It
+  is wrapped, and it has `tools: []`, so ADR-0006 applies unchanged and nothing here widens
+  the injection surface.
+- This generalises past voice: "stop" typed into Matrix while an overnight specialist is
+  running is the same dispatch against the same checkpoint. That generalisation is free and
+  is not built in W6.
 
 **Date**: 2026-08-07

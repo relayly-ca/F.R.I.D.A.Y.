@@ -103,6 +103,59 @@ class Tracing(_Strict):
     sample_rate: float = 1.0
 
 
+class BargeIn(_Strict):
+    """ADR-0019. Two phases, two deadlines.
+
+    Phase 1 is acoustic and has no model in it: VAD during playback pauses TTS inside
+    `stop_latency_ms`. Phase 2 is semantic and cannot start until end of speech: the router
+    classifies the utterance into one of six kinds and Python dispatches.
+
+    Conflating the two is the mistake this class exists to keep visible.
+    """
+
+    enabled: bool = False
+    stop_latency_ms: int = 200
+    require_aec: bool = True
+    resume_on_unaddressed: bool = True
+    resume_timeout_s: int = 8
+    classify_with: str = "router"
+    confidence_low: float = 0.60
+    ambiguity_action: str = "ask"
+    suspend_to_checkpoint: bool = True
+    require_speaker_match_to_redirect: bool = True
+
+    @model_validator(mode="after")
+    def _boundaries(self) -> BargeIn:
+        if not self.enabled:
+            return self
+        if not self.require_aec:
+            raise ValueError(
+                "barge_in.require_aec is false. Without echo cancellation her own output "
+                "re-enters the microphone and she interrupts herself, which is the failure "
+                "that makes people abandon full-duplex. ADR-0019 makes this a hardware "
+                "requirement, not a preference."
+            )
+        if self.ambiguity_action != "ask":
+            raise ValueError(
+                f"barge_in.ambiguity_action is {self.ambiguity_action!r}. ADR-0019: ambiguity "
+                "resolves to `ask` and never to a guess. 'What about Thursday?' is ambiguous "
+                "in the utterance, not in the model, and applying a wrong guess silently to "
+                "the right task is the expensive failure."
+            )
+        if not self.require_speaker_match_to_redirect:
+            raise ValueError(
+                "an unverified speaker could redirect a task. Spec section 9 gates every "
+                "voice command on the voiceprint, and an interruption is a command. Anyone "
+                "may pause her; only you may change what she is doing."
+            )
+        if self.resume_on_unaddressed and self.resume_timeout_s <= 0:
+            raise ValueError(
+                "resume_timeout_s must be positive. A pause that never resumes is worse than "
+                "no barge-in: she stops mid-sentence and never finishes."
+            )
+        return self
+
+
 class Voice(_Strict):
     enabled: bool = False
     stt_model: str = "large-v3-turbo"
@@ -110,10 +163,26 @@ class Voice(_Strict):
     wake_word: str = "friday"
     wake_threshold: float = 0.6
     clap_to_wake: bool = True
-    clap_exit_phrase: str = "ok"
+    clap_exit_phrase: str = "stand down"
     speaker_threshold: float = 0.75
     require_speaker_match: bool = True
     latency_budget_ms: int = 800
+    barge_in: BargeIn = BargeIn()
+
+    @model_validator(mode="after")
+    def _exit_phrase_is_not_a_backchannel(self) -> Voice:
+        # ADR-0019. "ok", "yeah", "right", "mm-hm" are backchannels: things people say to
+        # signal they are listening, mid-sentence, without meaning anything by them. An exit
+        # phrase that collides with one asks the classifier to resolve an ambiguity that is
+        # in the word rather than in the model, and it will get it wrong in both directions.
+        backchannels = {"ok", "okay", "yeah", "yep", "right", "sure", "mm-hm", "uh-huh", "got it"}
+        if self.clap_exit_phrase.strip().lower() in backchannels:
+            raise ValueError(
+                f"clap_exit_phrase {self.clap_exit_phrase!r} is a common backchannel. Pick a "
+                "phrase nobody says by reflex mid-sentence - 'stand down' is the default for "
+                "that reason. ADR-0019."
+            )
+        return self
 
     @model_validator(mode="after")
     def _gate_is_real(self) -> Voice:

@@ -56,8 +56,8 @@ cheap and replaceable — anything that captures audio and speaks ESPHome will d
 
 | Part | Notes |
 |---|---|
-| ESP32-S3 board with PSRAM | ESP32-S3-BOX-3 and the Atom Echo are the two known-good starting points |
-| I2S microphone | Onboard on the boards above. A separate INMP441 works on a bare ESP32-S3 |
+| ESP32-S3 board with PSRAM | **ESP32-S3-BOX-3** is the one to buy: it has onboard acoustic echo cancellation, which ADR-0019 makes a hard requirement for barge-in |
+| I2S microphone | Onboard on the S3-BOX. A bare ESP32-S3 with an INMP441 works, but has no AEC, so she will interrupt herself and barge-in is unusable |
 | Small speaker | For her half of the conversation. Onboard on the S3-BOX |
 | USB-C power | Permanently powered. These are not battery devices |
 

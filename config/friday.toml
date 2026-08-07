@@ -60,7 +60,52 @@ wake_threshold = 0.6
 # Spec section 5: two triggers. Wake word for hands-busy, clap for across-the-room.
 # A clap physically cannot false-trigger from speech.
 clap_to_wake = true
-clap_exit_phrase = "ok"        # returns to standby
+# NOT "ok". ADR-0019: "ok" is the most common English backchannel, and asking a classifier to
+# separate "ok" meaning "I am listening" from "ok" meaning "we are done" is asking it to solve
+# an ambiguity that is in the word rather than in the model. Pick a phrase nobody says by
+# reflex mid-sentence.
+clap_exit_phrase = "stand down"
+
+# --- Barge-in. ADR-0019. Built in W6. ---------------------------------------
+# Two phases with two deadlines, and conflating them is the mistake this section exists to
+# prevent. Stopping her is acoustic and immediate; working out what you meant is semantic and
+# cannot start until you stop talking.
+[voice.barge_in]
+enabled = false                # W6
+
+# Phase 1: acoustic. VAD runs DURING playback and pauses TTS. No model in this path.
+# Measured from you starting to speak to her stopping - not the 800ms budget, which measures
+# the other edge entirely.
+stop_latency_ms = 200
+# Hard requirement, not a preference. Without echo cancellation her own output re-enters the
+# microphone and she interrupts herself. ESP32-S3-BOX-3 has this onboard.
+require_aec = true
+
+# Pause, do not discard. A backchannel or speech aimed at someone else resumes from exactly
+# where she stopped. This is what makes being wrong cheap, and being wrong is guaranteed.
+resume_on_unaddressed = true
+# A pause that never resumes is worse than no barge-in: she stops mid-sentence and simply
+# never finishes.
+resume_timeout_s = 8
+
+# Phase 2: semantic. The `router` agent classifies into one of six kinds and never picks an
+# action. Python dispatches. Same separation as the scorer (ADR-0002).
+#   correction . refinement . abort . new_task . unaddressed . backchannel
+classify_with = "router"
+# Below this, ask one short clarifying question rather than guessing. "What about Thursday?"
+# is ambiguous in the utterance, not in the model, and no prompt removes that.
+confidence_low = 0.60
+# Deliberately `ask`. A wrong guess applied silently to the right task is the expensive
+# failure; one clarifying question is the cheap one.
+ambiguity_action = "ask"
+
+# A new task suspends the old one at its graph checkpoint rather than discarding it, so
+# "where were we" works. ADR-0012 already built this; nothing here is new machinery.
+suspend_to_checkpoint = true
+# Spec section 9: the Resemblyzer gate applies to every voice command and an interruption is
+# a command. Anyone in the room can pause her - that is physical and fine. Only a verified
+# speaker can change what she is doing.
+require_speaker_match_to_redirect = true
 # Spec section 5 and 9: Resemblyzer gate on every voice command. Below this cosine
 # similarity, consequential actions are refused and the refusal is spoken.
 speaker_threshold = 0.75
