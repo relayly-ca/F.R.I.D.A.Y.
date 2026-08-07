@@ -133,24 +133,33 @@ later. Full bill of materials, every package, and what is deliberately absent:
 `python-passlib` is on the list and what breaks without it:
 [`docs/CHOICES.md`](docs/CHOICES.md).
 
-## Status
+## Where this is
 
-Rebuilding from the spec. The build order in section 6 of the spec is the schedule, and it
-says **do not reorder**.
+Spec section 6's build order is the schedule and it says **do not reorder**. The table below
+is **generated** — work left is counted from the source, and the box column is probed live.
+Nothing here is ticked by hand, because a hand-ticked checklist is wrong within a week and
+wrong in the flattering direction.
 
-| Week | Guide | Do | Done when | Status |
+<!-- STAGE:START -->
+| | Phase | Done when | Work left | Your box |
 |---|---|---|---|---|
-| 1 | [W1](docs/weeks/W1.md) | llama.cpp + LiteLLM + OpenJarvis, `--preset chat-simple` | You chat locally | [ ] |
-| 1 | [W1](docs/weeks/W1.md) | Conduit + mautrix bridges + Hermes gateway | You text FRIDAY from your phone | [ ] |
-| 2 | [W2](docs/weeks/W2.md) | Radicale + DAVx5; ingest Matrix db + calendar | She answers "what's my week look like" | [ ] |
-| 2-3 | [W2](docs/weeks/W2.md), [W3](docs/weeks/W3.md) | Memory: vault, Qdrant, FTS5, reranker, **eval set** | 20/25 on your own eval questions | [ ] |
-| 3 | [W3](docs/weeks/W3.md) | OpenJarvis `monitor_operative` + `morning_digest` | Vault grows without you writing in it | [ ] |
-| 4 | [W4](docs/weeks/W4.md) | notmuch, files, browser, Home Assistant | Eval score holds after each new source | [ ] |
-| 4-5 | [W4](docs/weeks/W4.md), [W5](docs/weeks/W5.md) | Voice: Whisper to Kokoro, wake word + clap, speaker ID | Under 800ms, hands-free, voice-gated | [ ] |
-| 5 | [W5](docs/weeks/W5.md) | MCP tools, OpenHands sandbox, **supervisor** | She can act, and you can kill her | [ ] |
-| 6 | [W6](docs/weeks/W6.md) | Mode detection + brainstorm behavior | She shuts up and takes notes on command | [ ] |
-| 7 | [W7](docs/weeks/W7.md) | **Adaptive Scrutiny** + bounded specialists | She works overnight, reports at breakfast | [ ] |
-| 8+ | [W8](docs/weeks/W8.md) | `jarvis optimize skills --policy dspy` + Hermes Curator | Skills improve measurably, not just numerously | [ ] |
+| **>>** | **W1** Inference, routing, agent runtime, messaging | You chat locally, and you text her from your phone | — | not yet |
+|  | **W2** The eval set, the calendar, the first two senses | She answers 'what's my week look like' | — | not yet |
+|  | **W3** Memory, retrieval, the eval gate, the loops | 20/25 on your own eval questions | 23 stubs | not yet |
+|  | **W4** Three more senses, and speech | Eval score holds after each new source | — | not yet |
+|  | **W5** Wake path, voice gate, graph, tools, sandbox, supervisor | Under 800ms, and you can kill her | 11 stubs | not yet |
+|  | **W6** Modes, brainstorm, barge-in, the wall | She shuts up and takes notes on command | — | not yet |
+|  | **W7** Adaptive Scrutiny and bounded specialists | She works overnight, reports at breakfast | 7 stubs | not yet |
+|  | **W8** Skill optimisation and the Curator | Skills improve measurably, not just numerously | 1 stub | by hand |
+
+**27 functions implemented, 42 stubbed.** Counted from the source by `friday/status.py`, not ticked by hand — every stub raises `NotImplementedError` naming the phase that implements it, so this cannot drift from the code.
+
+Work left counts *stubs*, so a dash means nothing is stubbed — which is not the same as finished. W1 has no stubs because `friday/ingest/` and `friday/cli.py` have not been written at all. The **Your box** column is the one that answers whether a phase is actually done.
+
+`make stage` reports the same thing for **your** box.
+<!-- STAGE:END -->
+
+Regenerate with `make stage-readme`. For **your** box: `make stage`.
 
 Week 2-3 is the least exciting and the most load-bearing. Voice before memory is the mistake
 everyone makes.

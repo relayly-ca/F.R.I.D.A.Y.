@@ -21,7 +21,7 @@ UNITS   = $(notdir $(wildcard systemd/*.service))
 TIMERS  = $(notdir $(wildcard systemd/*.timer))
 STAMP  := $(shell date +%Y%m%d-%H%M%S)
 
-.PHONY: help preflight tree install models services start stop status logs eval test lint backup rollback known-good
+.PHONY: help preflight tree install models services start stop status logs eval test lint backup rollback known-good stage stage-readme
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -51,6 +51,23 @@ start: ## Start every friday-* unit and timer
 
 stop: ## Stop every friday-* unit and timer, leaving them enabled
 	@sudo systemctl stop $(UNITS) $(TIMERS) || true
+
+stage: ## Where this build is: code from the source, gates from this box
+	@$(UV) run python -m friday.status 2>/dev/null \
+		|| python3 -c "import sys,types,pathlib;m=types.ModuleType('friday.config');m.repo_root=lambda:pathlib.Path('$(REPO)');sys.modules['friday.config']=m;import friday.status as s;print(s.render())"
+
+stage-readme: ## Regenerate the tracker block in README.md
+	@$(UV) run python -m friday.status --markdown > /tmp/friday-stage.md 2>/dev/null \
+		|| python3 -c "import sys,types,pathlib;m=types.ModuleType('friday.config');m.repo_root=lambda:pathlib.Path('$(REPO)');sys.modules['friday.config']=m;import friday.status as s;print(s.render(markdown=True))" > /tmp/friday-stage.md
+	@python3 - <<'EOF'
+import pathlib, re
+readme = pathlib.Path("README.md"); block = pathlib.Path("/tmp/friday-stage.md").read_text().strip()
+t = readme.read_text()
+new = re.sub(r"(<!-- STAGE:START -->\n).*?(\n<!-- STAGE:END -->)",
+             lambda m: m.group(1) + block + m.group(2), t, flags=re.S)
+readme.write_text(new)
+print("README stage block updated" if new != t else "no STAGE markers found")
+EOF
 
 status: ## One line per friday-* unit
 	@systemctl list-units 'friday-*' --all --no-pager --no-legend \
