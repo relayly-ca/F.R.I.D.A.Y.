@@ -44,6 +44,19 @@ FRIDAY_YES=1       bash install.sh     # no prompts, for a re-run
 FRIDAY_STEP=models bash install.sh     # run one step and stop
 ```
 
+**It tells you what it cannot do.** Four things need a human, and the dashboard tracks each
+from live state rather than printing a fixed list — so it shrinks as you work through it:
+
+| Needs you | Why it cannot be automated |
+|---|---|
+| Model repository ids | Spec §1: verify current picks before downloading. `install/03-models.sh` refuses to run rather than fetching something wrong |
+| The mesh | WireGuard or Headscale. Spec §9 — the phone reaches Conduit over the mesh or not at all |
+| Conduit + one bridge | Registering accounts and linking a bridge means scanning a code from your phone |
+| `vault/profile.md` | You write it. Tier 1, injected into every prompt, and not generated |
+
+Anything `install/06-upstream.sh` could not finish is also written to
+`/tmp/friday-manual-steps.txt`.
+
 The installer covers **week 1 only**. Weeks 2 through 8 are deliberately manual, because each
 one has a gate you have to look at — an eval score, a latency measurement, a security check
 you should see fail before you see it pass. See [`docs/weeks/`](docs/weeks/).
@@ -62,9 +75,11 @@ sudo bash install/02-python-env.sh       # uv, pinned 3.12, validates config
 sudo bash install/03-models.sh           # weights for the active profile
 sudo bash install/04-services.sh         # units + rendered config, behind two gates
 sudo bash install/05-litellm-keys.sh     # one virtual key per agent
+sudo bash install/06-upstream.sh         # OpenJarvis, Hermes, Langfuse, Qdrant
 ```
 
-Then, still by hand and covered in W1: OpenJarvis, the mesh, Conduit and one bridge, Hermes.
+Then, still by hand and covered in W1: the mesh, Conduit and one bridge, and pointing
+OpenJarvis and Hermes at LiteLLM.
 
 Check the box at any time. It reads and changes nothing, which is why the supervisor also
 runs it as a health check every 30 seconds:

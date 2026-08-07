@@ -67,6 +67,29 @@ else
     [[ -n "$build_user" ]] || die "need SUDO_USER to build from the AUR"
     sudo -u "$build_user" paru -S --needed --noconfirm llama.cpp-cuda
   fi
+
+  # The rest of the AUR set. Split from llama.cpp because that one has a repository/AUR
+  # ambiguity and these do not.
+  #
+  # Deliberately ONE bridge. Spec section 10 names bridge instability as the first thing
+  # that breaks, WhatsApp especially, and debugging two unfamiliar bridges at once turns a
+  # week-1 evening into a week-1 weekend. Add a second only after the first survives a week.
+  log "AUR: homeserver, bridge, git, mesh"
+  AUR_PKGS=(
+    matrix-conduit          # VERIFY: conduwuit is the actively maintained fork
+    mautrix-whatsapp        # or mautrix-signal / mautrix-telegram. ONE.
+    forgejo                 # W5: agent branches, human merges
+    headscale               # optional; plain WireGuard is the smaller thing that works
+  )
+  for pkg in "${AUR_PKGS[@]}"; do
+    if pacman -Qi "$pkg" >/dev/null 2>&1; then
+      info "$pkg present"
+    elif ! sudo -u "$build_user" paru -S --needed --noconfirm "$pkg"; then
+      # Not fatal. An AUR package can fail to build for reasons that have nothing to do with
+      # FRIDAY, and one missing bridge should not stop the whole install.
+      warn "$pkg failed to build. Install it by hand later; nothing else depends on it yet."
+    fi
+  done
 fi
 
 # --- Docker ------------------------------------------------------------------

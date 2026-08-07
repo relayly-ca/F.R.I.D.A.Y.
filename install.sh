@@ -124,10 +124,31 @@ detect() {
     S[units]=done; D[units]="installed, $up running"
   else S[units]=todo; D[units]="systemd units + rendered config"; fi
 
+  # upstream: the components no Arch package provides
+  local have=0 want=3
+  command -v jarvis >/dev/null 2>&1 && ((have++))
+  [[ -x "$ROOT/.venv/bin/hermes" ]] && ((have++))
+  docker ps --filter 'name=langfuse' --format '{{.Names}}' 2>/dev/null | grep -q . && ((have++))
+  if [[ "$have" -eq "$want" ]]; then S[upstream]=done; D[upstream]="OpenJarvis, Hermes, Langfuse"
+  elif [[ "$have" -gt 0 ]]; then S[upstream]=warn; D[upstream]="$have of $want - some need you"
+  else S[upstream]=todo; D[upstream]="OpenJarvis, Hermes, Langfuse, Qdrant"; fi
+
   # keys
   if [[ -f "$ROOT/secrets/litellm-keys.yaml" ]]; then
     S[keys]=done; D[keys]="per-agent virtual keys"
   else S[keys]=todo; D[keys]="spec section 8, one key per agent"; fi
+
+  # model repo ids. install/03 refuses to run while any row is a placeholder, so this is
+  # detected from the script itself rather than from a note someone might forget to update.
+  if grep -q '# VERIFY:' "$REPO/install/03-models.sh"; then
+    S[weights]=todo; D[weights]="edit the table at the top of install/03-models.sh"
+  else S[weights]=done; D[weights]="verified"; fi
+
+  # mesh. Spec section 9: no port forwarding, so the phone reaches Conduit over a mesh or
+  # not at all. This is the half of week 1 that reads as messaging and is really networking.
+  if ip link show wg0 >/dev/null 2>&1 || command -v headscale >/dev/null 2>&1; then
+    S[mesh]=done; D[mesh]="configured"
+  else S[mesh]=todo; D[mesh]="WireGuard or Headscale - never a port forward"; fi
 
   # profile.md - tier 1, hand written, and never generated
   if [[ -f "$ROOT/vault/profile.md" ]]; then
@@ -152,9 +173,12 @@ dashboard() {
   ui_status "${S[models]}"   "6  Weights"        "${D[models]}"
   ui_status "${S[units]}"    "7  Services"       "${D[units]}"
   ui_status "${S[keys]}"     "8  Virtual keys"   "${D[keys]}"
+  ui_status "${S[upstream]}" "9  Upstream projects" "${D[upstream]}"
 
-  ui_header "Yours"
+  ui_header "Yours - the installer cannot do these"
   ui_status "${S[profile]}"  "vault/profile.md"  "${D[profile]}"
+  ui_status "${S[weights]}"  "model repo ids"    "${D[weights]}"
+  ui_status "${S[mesh]}"     "mesh + Matrix"     "${D[mesh]}"
 }
 
 # --- Steps --------------------------------------------------------------------
@@ -166,6 +190,7 @@ step_venv()     { ui_run "Python environment" bash "$REPO/install/02-python-env.
 step_models()   { ui_run "Weights" bash "$REPO/install/03-models.sh"; }
 step_units()    { ui_run "Services" bash "$REPO/install/04-services.sh"; }
 step_keys()     { ui_run "Virtual keys" bash "$REPO/install/05-litellm-keys.sh"; }
+step_upstream() { ui_run "Upstream projects" bash "$REPO/install/06-upstream.sh"; }
 
 step_secrets() {
   ui_header "Secrets"
@@ -221,12 +246,33 @@ The installer does not generate it. That is not a limitation."
 
 run_all() {
   local failed=0
-  for s in packages users tree secrets venv models units keys; do
+  for s in packages users tree secrets venv models units keys upstream; do
     [[ "${S[$s]}" == "done" ]] && { ui_ok "$s already done, skipping"; continue; }
     "step_${s}" || { failed=1; break; }
     detect
   done
   return $failed
+}
+
+# --- What still needs a human -------------------------------------------------
+# Computed from live state rather than printed unconditionally, so it shrinks as you work
+# through it and says nothing when there is nothing left.
+report_manual() {
+  local -a todo=()
+  [[ "${S[weights]}"  != "done" ]] && todo+=("Model repo ids: edit the table at the top of install/03-models.sh. Spec section 1 says verify current picks before downloading, so the script refuses to run rather than fetching something wrong.")
+  [[ "${S[upstream]}" != "done" ]] && todo+=("Upstream projects: run step 9, or see /tmp/friday-manual-steps.txt if it already ran.")
+  [[ "${S[mesh]}"     != "done" ]] && todo+=("The mesh: WireGuard or Headscale. Spec section 9 - the phone reaches Conduit over the mesh or not at all. Never a port forward.")
+  [[ "${S[profile]}"  != "done" ]] && todo+=("vault/profile.md: you write it by hand. Tier 1 of four, injected into every prompt. Not generated, and that is not a limitation.")
+
+  # Conduit and the bridge are genuinely interactive: registering accounts and linking a
+  # bridge means scanning a code from your phone. No script can do it for you.
+  todo+=("Conduit: register your account and a 'friday' account, then link ONE bridge from your Matrix client. Spec section 10 - bridge instability is the first thing that breaks, so add a second only after the first survives a week.")
+
+  if [[ ${#todo[@]} -eq 0 ]]; then
+    ui_summary "Week 1 complete" "Nothing left for a human." "Done when: you chat locally, and you text her from your phone."
+  else
+    ui_summary "Needs you (${#todo[@]})" "${todo[@]}"
+  fi
 }
 
 # --- Profile choice -----------------------------------------------------------
@@ -269,6 +315,7 @@ while true; do
     "Run one step" \
     "Change profile (currently: $PROFILE)" \
     "Preflight (reads, changes nothing)" \
+    "What still needs me" \
     "Write vault/profile.md" \
     "What gets installed, and why" \
     "Quit")"
@@ -276,20 +323,16 @@ while true; do
   case "$choice" in
     "Install everything"*)
       if ui_confirm "Install everything still outstanding, on profile '$PROFILE'?"; then
-        run_all && ui_summary "Week 1 installed" \
-          "Next, from docs/weeks/W1.md:" \
-          "  step 9   OpenJarvis      jarvis init --preset chat-simple" \
-          "  step 10  The mesh        WireGuard or Headscale" \
-          "  step 11  Conduit         one bridge only, to start" \
-          "  step 12  Hermes          hermes model set primary daily" \
-          "" \
-          "Done when: you chat locally, and you text her from your phone."
+        run_all
+        detect
+        report_manual
       fi ;;
     "Run one step")
-      s="$(ui_choose "Which step?" packages users tree secrets venv models units keys)"
+      s="$(ui_choose "Which step?" packages users tree secrets venv models units keys upstream)"
       [[ -n "$s" ]] && "step_${s}" ; detect ;;
     "Change profile"*) choose_profile ; detect ;;
     "Preflight"*)      bash "$REPO/install/preflight.sh" || true ;;
+    "What still needs me") report_manual ;;
     "Write vault"*)    step_profile_md ; detect ;;
     "What gets installed"*)
       if [[ $UI_HAS_GUM -eq 1 ]]; then gum pager < "$REPO/docs/INSTALL.md"

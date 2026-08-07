@@ -31,6 +31,10 @@ dependencies = [
     # dependency.
     "openai>=1.30",
     "httpx>=0.27",
+    # The proxy itself, in the venv rather than as a `uv tool`, because
+    # systemd/friday-litellm.service runs /srv/friday/.venv/bin/litellm. A uv tool lands in
+    # the invoking user's ~/.local/bin, which the friday user does not have.
+    "litellm[proxy]>=1.40",
 
     # Memory. SQLite and FTS5 come from the stdlib.
     "qdrant-client>=1.9",
@@ -45,6 +49,10 @@ dependencies = [
     # Tracing. Spec section 1: "You will need this at 3am." Self-hosted; the SDK points
     # at a local Langfuse, never at cloud.
     "langfuse>=2.36",
+
+    # Voice pipeline transport. ADR-0023: VAD, turn-taking, streaming, barge-in phase 1.
+    # Light without the extras; the STT and TTS adapters come with the `voice` extra.
+    "pipecat-ai>=0.0.60",
 
     # Operational.
     "structlog>=24.1",
