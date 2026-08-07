@@ -1,0 +1,48 @@
+# LiteLLM. Transport only (spec section 8).
+#
+# /etc/friday/litellm.yaml is RENDERED per profile by install/04-services.sh from
+# config/litellm.yaml. Do not edit it in place - the next install overwrites it.
+
+[Unit]
+Description=FRIDAY LiteLLM proxy
+Documentation=file:///srv/friday/docs/weeks/W1.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=friday
+Group=friday
+WorkingDirectory=/srv/friday
+
+# The master key exists to MINT per-agent virtual keys and for nothing else (spec section 8).
+# It arrives decrypted by a helper the agent cannot read - ADR-0005, capabilities not
+# credentials - and never as a literal in this file.
+ExecStartPre=/srv/friday/bin/secret-helper litellm-env /run/friday/litellm.env
+EnvironmentFile=/run/friday/litellm.env
+RuntimeDirectory=friday
+RuntimeDirectoryMode=0700
+
+ExecStart=/srv/friday/.venv/bin/litellm --config /etc/friday/litellm.yaml --host 127.0.0.1 --port 4000
+
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/friday/db /srv/friday/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

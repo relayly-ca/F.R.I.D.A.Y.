@@ -1,0 +1,51 @@
+# Hermes Agent. Gateways and the user model (spec section 1).
+#
+# 23 gateways from one process. Matrix is the one W1 and W2 depend on - spec section 1 calls
+# it "the whole answer to 'it knows my messages'".
+
+[Unit]
+Description=FRIDAY Hermes gateway
+Documentation=file:///srv/friday/docs/weeks/W1.md
+After=network-online.target friday-litellm.service
+Wants=network-online.target
+Requires=friday-litellm.service
+
+[Service]
+Type=exec
+User=friday
+Group=friday
+WorkingDirectory=/srv/friday
+
+# Per-agent virtual key, never the master key. Spec section 8: Hermes shipped a hardening
+# release specifically patching a LiteLLM credential exposure.
+ExecStartPre=/srv/friday/bin/secret-helper agent-key hermes /run/friday/hermes.env
+EnvironmentFile=/run/friday/hermes.env
+RuntimeDirectory=friday
+RuntimeDirectoryMode=0700
+
+# VERIFY: the launch command against the Hermes Agent repository.
+ExecStart=/srv/friday/.venv/bin/hermes serve
+
+# Hermes reaches bridges and the homeserver on loopback. It has no reason to reach the
+# internet: the bridges own their own network handling, as separate processes.
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/friday/db /srv/friday/logs /srv/friday/vault
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

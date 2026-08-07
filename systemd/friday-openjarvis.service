@@ -1,0 +1,56 @@
+# OpenJarvis. Agent runtime (spec section 1): scheduled agents, continuous monitors,
+# DSPy skill optimisation.
+#
+# agent/core/ is owned by fridaysup and mounted read-only here. ADR-0004: she writes skills,
+# tools, prompts and configs - never the loop that runs them. The ReadOnlyPaths line below is
+# belt to the filesystem's braces; both are deliberate.
+
+[Unit]
+Description=FRIDAY OpenJarvis runtime
+Documentation=file:///srv/friday/docs/weeks/W1.md
+After=network-online.target friday-litellm.service
+Wants=network-online.target
+Requires=friday-litellm.service
+
+[Service]
+Type=exec
+User=friday
+Group=friday
+WorkingDirectory=/srv/friday
+
+ExecStartPre=/srv/friday/bin/secret-helper agent-key openjarvis /run/friday/openjarvis.env
+EnvironmentFile=/run/friday/openjarvis.env
+RuntimeDirectory=friday
+RuntimeDirectoryMode=0700
+
+# VERIFY: the launch command against the OpenJarvis repository.
+ExecStart=/usr/bin/jarvis serve
+
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/friday/agent/core
+ReadWritePaths=/srv/friday/db /srv/friday/logs /srv/friday/vault /srv/friday/agent/skills /srv/friday/agent/tools /srv/friday/agent/prompts /srv/friday/work
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+
+# Spec section 9: hard budgets. These are the aggregate ceilings; per-task ceilings live in
+# config/agents.yaml and are enforced by the supervisor, which is a different user and
+# therefore outside her reach.
+MemoryMax=8G
+TasksMax=512
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

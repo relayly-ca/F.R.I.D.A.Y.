@@ -13,10 +13,23 @@ set -uo pipefail   # deliberately not -e: every check runs, then it reports
 ROOT=${ROOT:-/srv/friday}
 REPO=${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 
-# Spec section 1: daily driver at 24 GB is Qwen 3.6 27B @ Q4, plus about 6 GB always
-# resident (4B router, bge-m3, bge-reranker-v2-m3, faster-whisper, Kokoro).
-MIN_VRAM_MB=${MIN_VRAM_MB:-23000}
-MIN_DISK_GB=${MIN_DISK_GB:-120}
+# Floors come from the active profile, not from a constant. ADR-0025.
+#
+# Before profiles existed these were fixed at the target-box numbers and MIN_VRAM_MB became
+# an override people set to silence the check - which is the same as not having one. Now the
+# floor is a property of a named profile, and running the dev profile is a deliberate act
+# recorded in /etc/friday/profile rather than an env var someone exported once.
+PROFILE="${FRIDAY_PROFILE:-}"
+[[ -z "$PROFILE" && -r /etc/friday/profile ]] && PROFILE="$(tr -d '[:space:]' < /etc/friday/profile)"
+PROFILE="${PROFILE:-target}"
+
+case "$PROFILE" in
+  dev)    _DEF_VRAM=0     ; _DEF_DISK=40  ;;
+  target) _DEF_VRAM=23000 ; _DEF_DISK=120 ;;
+  *)      printf 'unknown profile %s (expected dev or target)\n' "$PROFILE" >&2; exit 1 ;;
+esac
+MIN_VRAM_MB=${MIN_VRAM_MB:-$_DEF_VRAM}
+MIN_DISK_GB=${MIN_DISK_GB:-$_DEF_DISK}
 
 QUIET=0
 [[ "${1:-}" == "--quiet" ]] && QUIET=1
@@ -30,14 +43,17 @@ fail() { FAIL=$((FAIL+1));                printf '  %sFAIL%s  %s\n' "$RED" "$OFF
 warn() { WARN=$((WARN+1));                printf '  %sWARN%s  %s\n' "$YEL" "$OFF" "$*"; }
 sect() { [[ $QUIET -eq 1 ]] || printf '\n%s\n' "$*"; }
 
-printf 'FRIDAY preflight  %s  %s\n' "$(date -Is)" "$(hostname)"
+printf 'FRIDAY preflight  %s  %s  profile=%s\n' "$(date -Is)" "$(hostname)" "$PROFILE"
 
 # ---------------------------------------------------------------------------
 sect "1. GPU and driver"
+# On the dev profile a missing GPU is a warning: llama.cpp runs on CPU, slowly, and every
+# layer except answer quality is still testable (ADR-0025). On target it is a failure.
+_gpu_missing() { [[ "$PROFILE" == "dev" ]] && warn "$1" || fail "$1"; }
 if ! command -v nvidia-smi >/dev/null 2>&1; then
-  fail "nvidia-smi not found (nvidia-utils)"
+  _gpu_missing "nvidia-smi not found (nvidia-utils)"
 elif ! nvidia-smi -L >/dev/null 2>&1; then
-  fail "nvidia-smi present but cannot reach the driver (lsmod | grep nvidia)"
+  _gpu_missing "nvidia-smi present but cannot reach the driver (lsmod | grep nvidia)"
 else
   pass "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1), driver $(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1)"
   systemctl is-active --quiet nvidia-persistenced 2>/dev/null \
@@ -51,8 +67,8 @@ if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
   free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -n1)
   used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -n1)
   [[ "$total" -ge $MIN_VRAM_MB ]] \
-    && pass "total VRAM ${total} MB" \
-    || fail "total VRAM ${total} MB below ${MIN_VRAM_MB} MB. See the model table in the spec and drop to a smaller daily driver."
+    && pass "total VRAM ${total} MB (floor ${MIN_VRAM_MB} for profile ${PROFILE})" \
+    || fail "total VRAM ${total} MB below ${MIN_VRAM_MB} MB for profile ${PROFILE}. Either drop to a smaller daily driver from the spec section 1 table, or run the dev profile: echo dev | sudo tee /etc/friday/profile"
   if pgrep -x llama-server >/dev/null 2>&1; then
     pass "VRAM ${used} MB in use by llama-server, ${free} MB free"
   elif [[ "$free" -lt $MIN_VRAM_MB ]]; then
@@ -60,6 +76,8 @@ if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
   else
     pass "free VRAM ${free} MB"
   fi
+elif [[ "$PROFILE" == "dev" ]]; then
+  warn "cannot measure VRAM; dev profile permits CPU-only inference"
 else
   fail "cannot measure VRAM"
 fi
@@ -203,7 +221,8 @@ done
 command -v llama-server >/dev/null 2>&1 && pass "llama-server" || warn "llama-server not found (AUR llama.cpp-cuda)"
 
 printf '\n%s\n' "----------------------------------------"
-printf 'preflight: %d passed, %d warnings, %d failed\n' "$PASS" "$WARN" "$FAIL"
+printf 'preflight: %d passed, %d warnings, %d failed  (profile %s)\n' "$PASS" "$WARN" "$FAIL" "$PROFILE"
+[[ "$PROFILE" == "dev" ]] && printf '%sdev profile: the 20/25 eval gate is a TARGET gate. ADR-0025.%s\n' "$YEL" "$OFF"
 if [[ $FAIL -gt 0 ]]; then
   printf '%sPREFLIGHT FAILED%s\n' "$RED" "$OFF"
   exit 1

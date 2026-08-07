@@ -53,6 +53,18 @@ profiles:
     # loaded. Off by default here; turn it on deliberately when testing the voice path.
     voice_default: false
 
+    # Per-agent override, for when the global alias map is too blunt.
+    #
+    # Alias remapping above is per-BOX. This is per-AGENT-per-box, and it exists because
+    # those are genuinely different questions: "what does `daily` mean here" is not the same
+    # as "does the consolidator specifically need something better here".
+    #
+    # Keys are agent names from config/agents.yaml; values are aliases. Empty by default,
+    # because an override is a divergence between the two machines and every one of them is
+    # a reason the dev box stops predicting the target box.
+    agent_overrides: {}
+      # consolidator: daily     # example: pin one agent higher than the global map
+
     llama_args:
       # No --n-gpu-layers. llama.cpp falls back to CPU cleanly; forcing layers onto a card
       # that cannot hold them fails at load with a message that scrolls past.
@@ -82,6 +94,10 @@ profiles:
 
     voice_default: true
 
+    # See dev. Empty here too - on target the aliases already mean what config/agents.yaml
+    # assumes, so an override would be undoing a decision rather than adapting one.
+    agent_overrides: {}
+
     llama_args:
       ctx_size: 16384
       n_gpu_layers: 999
@@ -94,6 +110,7 @@ constraints:
   # Changeable per profile.
   may_change:
     - which model an alias resolves to
+    - which alias a single agent resolves to (agent_overrides)
     - which models stay resident
     - llama.cpp context size and GPU layer count
     - preflight VRAM and disk floors
@@ -105,8 +122,10 @@ constraints:
   may_not_change:
     - the scorer having no tools (ADR-0006)
     - agent/core being owned by fridaysup (ADR-0004)
-    - per-agent tool allowlists and budgets (spec section 9)
-    - sensitivity routing pinning local (ADR-0008)
+    - per-agent tool allowlists, budgets and can_write (spec section 9) - agent_overrides
+      touch `model` and nothing else, so a profile can never widen what an agent may do
+    - sensitivity routing pinning local (ADR-0008) - an agent_override may change WHICH
+      local model an agent uses, never whether it is local
     - bounded memory blocking the write path (ADR-0007)
     - the writer never being the checker (ADR-0013)
     - the speaker gate threshold floor (ADR-0019)

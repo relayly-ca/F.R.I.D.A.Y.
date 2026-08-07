@@ -1,0 +1,53 @@
+# llama.cpp server, one instance per alias. ADR-0025 renders the env files.
+#
+#   systemctl start friday-llama@daily
+#
+# Templated so adding `coder` in W5 is a new env file and nothing else.
+
+[Unit]
+Description=FRIDAY llama-server (%i)
+Documentation=file:///srv/friday/docs/weeks/W1.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=friday
+Group=friday
+EnvironmentFile=/etc/friday/llama/%i.env
+ExecStart=/usr/bin/llama-server --model ${MODEL} --host 127.0.0.1 --port ${PORT} $ARGS
+
+# Spec section 9: never a port forward. The unit binds loopback above; this stops the
+# process reaching anywhere else, so a compromised inference server has no egress.
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+# Sandboxing. The supervisor deliberately carries LESS of this (ADR-0004) - sandboxing the
+# guard alongside the guarded defeats it - but everything it supervises carries all of it.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=false
+DeviceAllow=/dev/nvidia* rw
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=/dev/nvidia-uvm rw
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/friday/models
+ReadWritePaths=/srv/friday/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+Restart=on-failure
+RestartSec=5
+# A model that cannot load will not load on the fifth attempt either. Fail loudly and let
+# the supervisor's health check notice, rather than restarting forever in the journal.
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+[Install]
+WantedBy=multi-user.target
