@@ -27,7 +27,7 @@ Format: Context / Decision / Consequences / Date.
 | 0011 | pydantic-ai is the agent and tool library; LiteLLM stays transport | this session | Accepted |
 | 0012 | A workflow graph layer: pydantic-graph for typing, ours for state and gates | **extends spec §1** | Accepted |
 | 0013 | The ratchet, and the writer is never the checker | spec §10 | Accepted |
-| 0014 | The seventh axis, and whether there is an eighth | spec §4 | **Proposed** |
+| 0014 | The seventh axis: conflict is a flag, repetition is the axis | **supersedes ADR-0002, amends spec §4** | Accepted |
 | 0015 | Candidates evaluated and cut, August 2026 | spec §3 | Accepted |
 | 0016 | The ambient dashboard is two layers: Home Assistant and a wall surface | **extends spec §1** | Accepted |
 | 0017 | The vault is Obsidian-compatible | spec §7 | Accepted |
@@ -36,6 +36,8 @@ Format: Context / Decision / Consequences / Date.
 | 0020 | Vision and IoT defer past W8; ambient means one room first | **reorders spec §6** | Accepted |
 | 0021 | ADR-0003 re-examined: OpenAGI stays out, for ADR-0001 and not for the licence | **amends ADR-0003** | Accepted |
 | 0022 | OpenAGI does not replace Hermes | spec §1, §7 | Accepted |
+| 0023 | Pipecat owns the voice pipeline transport; the policy stays ours | spec §1, §6 | Accepted |
+| 0024 | Radicale and Odysseus do not overlap; ADR-0015 was wrong | **corrects ADR-0015** | Accepted |
 
 ---
 
@@ -1218,5 +1220,200 @@ That is also where `repetition` earns its place as an axis, which is ADR-0014 an
   argues for a change, the check is which rows are ours already and which rows were left out.
 - Screen observation, whenever it arrives, is the largest new attack surface proposed so far.
   It gets an ADR of its own and it is measured against ADR-0006.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0023: Pipecat owns the voice pipeline transport; the policy stays ours
+
+**Context**
+
+`friday/voice/` was going to hand-roll real-time audio orchestration: VAD, turn-taking,
+streaming buffers, backpressure, and interruption plumbing. That is the category of code that
+is easy to write, hard to write correctly, and where being subtly wrong shows up as "it feels
+laggy" rather than as an error.
+
+ADR-0019 made it worse by specifying barge-in, which is the hardest part of that surface.
+
+Pipecat (`pipecat-ai/pipecat`, **BSD-2-Clause**, Python 3.11+, installed with `uv`) is a
+library for exactly this. It is a library and not a daemon, which is the same shape as
+ADR-0011 and ADR-0012, so ADR-0001 is not engaged.
+
+What matters is that its local path is first-class and its picks are already ours: local STT
+including Whisper, local TTS including **Kokoro**. It handles VAD, turn-taking, streaming and
+interruption natively, and streaming-first-sentence TTS is one of the three fixes W5 step 3
+names for getting under 800ms.
+
+**Decision**
+
+Pipecat owns the **transport** of the voice pipeline. `friday/voice/` keeps the **policy**.
+
+| Pipecat | `friday/voice/` |
+|---|---|
+| VAD, turn-taking, streaming, backpressure | The Resemblyzer speaker gate |
+| Audio in and out, device handling | The clap trigger (spec §5) |
+| Interruption plumbing — barge-in **phase 1** | Barge-in **phase 2**: the six-kind classification |
+| Whisper and Kokoro adapters | Routing into scrutiny and graph checkpoints |
+
+The split falls on a real seam. Phase 1 of barge-in is "speech detected during playback,
+pause output" — generic real-time audio, and Pipecat does it. Phase 2 is "is this a
+correction or a new task", which is about task semantics, scrutiny's `ask`, and ADR-0012's
+checkpoints. No audio library has a concept for that and none should.
+
+**Consequences**
+
+- **Pipecat does not solve the AEC requirement.** Its echo cancellation path is Krisp Viva,
+  which is a commercial dependency and fails spec §9. ADR-0019's hard requirement stands and
+  is met the way ADR-0020 says: hardware AEC in the microphone, or `webrtc-audio-processing` /
+  `speexdsp` in the path. Adopting Pipecat must not be mistaken for having handled this.
+- A dependency lands in the latency-critical path. It is pinned, and W4 step 8's per-stage
+  benchmark is what says whether it costs anything.
+- Pipecat ships adapters for 20+ STT, 30+ TTS and 40+ cloud services. None are installed;
+  optional dependencies are selected explicitly, and no cloud adapter may ever be.
+- Python 3.11+ against our 3.12 pin: compatible, and the pin does not move for it.
+- If Pipecat's pipeline shape ever fights the speaker gate or the clap trigger, the policy
+  wins and the transport is replaced. That is the direction of the dependency and it is why
+  the split is written down.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0024: Radicale and Odysseus do not overlap; ADR-0015 was wrong
+
+**Context**
+
+ADR-0015 left a row open: "Odysseus ships notes, tasks and CalDAV sync, which partially
+overlaps W2's Radicale."
+
+That was an error, and the error was mine: I read "CalDAV sync" as a CalDAV server.
+
+Odysseus's calendar is a CalDAV **client**. It syncs *to* a CalDAV server and its own
+documentation names the servers it syncs to — Radicale among them, explicitly.
+
+**Decision**
+
+Both stay, because they were never competing. Radicale is the **server**; Odysseus and DAVx5
+are both **clients** of it.
+
+```
+    phone (DAVx5) ─┐
+                   ├─→  Radicale  (127.0.0.1:5232, the CalDAV server)
+    Odysseus      ─┘         ↑
+                             └─ friday.ingest.caldav reads it (W2)
+```
+
+This is the better architecture and not merely the compatible one. A dedicated CalDAV server
+is a small always-on thing; a workspace application is a large one. Putting the calendar
+server inside the workspace means a restart of the workspace takes the calendar down, and W2
+needs CalDAV working well before Odysseus is necessarily installed at all.
+
+**Consequences**
+
+- W2 is unchanged. Radicale stays where it is, in the phase where it is.
+- Odysseus gains a calendar view of the same data, for free, by pointing at Radicale.
+- ADR-0015's open row is closed. The other open row, Pipecat, is closed by ADR-0023.
+- A note on method: that row said "not evaluated in depth" and it was right to say so. The
+  cost of the error was one open question carried for a day; the cost of not marking it would
+  have been a decision made on a misreading.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0014 — RESOLUTION
+
+**Status: Accepted.** Appended rather than rewritten. **This resolution supersedes ADR-0002's
+axis list and amends spec §4's.**
+
+**What settled it was already in the config file.**
+
+`config/scrutiny.yaml` declares the axes with types:
+
+```yaml
+  urgency:      { type: float }
+  impact:       { type: float }
+  novelty:      { type: float }
+  risk:         { type: float }
+  confidence:   { type: float }
+  specificity:  { type: float }
+  conflict:     { type: bool }     # <- not like the others
+```
+
+And the rule table uses it exactly once, alone, with no threshold:
+
+```yaml
+  - name: conflict_asks
+    when: "conflict"
+    action: ask
+```
+
+Every other axis is a graded 0.0-1.0 float compared against a tunable threshold. `conflict` is
+a bare boolean guard. **It is a flag, not an axis**, and the file has been saying so from the
+day it was written — the `type: bool` line is the tell, and the single thresholdless rule is
+the confirmation.
+
+That reframes the question. It was never "seven or eight axes." It was that one of the seven
+was a different kind of thing wearing the same label.
+
+**Decision**
+
+`conflict` moves out of the axes and into `context`, where flags already live —
+`context.speaker_verified` is the existing precedent and the same shape of thing: a fact about
+the signal rather than a judgement about its content.
+
+`repetition` takes the seventh axis slot, as a float, matching OpenAGI's source.
+
+```
+urgency . impact . novelty . repetition . risk . confidence . specificity
+```
+
+Seven axes, all floats, all thresholded. The rule table changes by one word:
+
+```yaml
+  - name: conflict_asks
+    when: "context.conflict"      # was: "conflict"
+    action: ask
+```
+
+**Why this is better than eight, beyond the bookkeeping.** The scorer is a 4B model
+(spec §4), and asking it for seven homogeneous graded judgements is a materially easier task
+than six graded judgements plus one boolean of a different kind. Homogeneity is worth real
+accuracy at that model size, and the entire economics of the layer depend on the small model
+being good enough.
+
+**Why `repetition` is worth the slot.** It is the axis that finds work worth automating, which
+is the proactive half of what an ambient assistant is for — spec §6 week 3's
+`monitor_operative` and week 8's skill optimisation both want it, and neither has a signal to
+key on today. It also gives ADR-0022's deferred pattern-detection source somewhere to land
+when it arrives.
+
+**One consequence that must be handled in the implementation, not left to care.**
+`scrutiny/policy.py` resolves missing `context.*` keys to `False` rather than raising — which
+is correct for `speaker_verified` on a Matrix message, where there is no speaker at all. For
+`conflict` that default would **silently disable a guard**, which is precisely the failure the
+module's own comments call the worst this table can have.
+
+So: the daemon must always set `context.conflict` for any signal that passed through
+retrieval, and `policy.decide` must reject a signal that reaches `conflict_asks` without the
+key present. A guard that fails open is not a guard.
+
+**What changes when coding resumes**
+
+```
+config/scrutiny.yaml    axes: conflict -> repetition (float, with a describe)
+                        rule conflict_asks: when -> "context.conflict"
+scrutiny/score.py       AXES tuple; Score.conflict:bool -> Score.repetition:float;
+                        __post_init__ loses the bool special case - all seven validate
+                        identically, which is the simplification this buys
+scrutiny/policy.py      required-context check so conflict_asks cannot fail open
+scrutiny/daemon.py      compute and always set context.conflict from the retrieval
+                        that novelty already performs - no extra lookup
+tests/test_policy.py    the conflict cases move from score to context
+docs/                   spec §4 quote annotated; README, W7, ADR-0002 cross-referenced
+```
+
+Nothing above is done yet.
 
 **Date**: 2026-08-07
