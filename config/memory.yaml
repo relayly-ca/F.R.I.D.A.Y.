@@ -1,0 +1,116 @@
+# Memory. Spec section 7.
+#
+# Four tiers. The order matters: profile.md is injected into every prompt regardless of
+# retrieval, and the index is derived from the vault and the episodic log rather than being
+# a source of truth.
+
+version: 1
+
+# --- Tier 1: profile.md ------------------------------------------------------
+# Hand-written by you, about 1500 tokens, injected into EVERY prompt. Honcho feeds
+# proposals into it; you approve them. Never generated.
+profile:
+  path: /srv/friday/vault/profile.md
+  max_tokens: 1500
+  # Injected before retrieval, always, on every turn including voice. If it is missing or
+  # still the installer stub, that is a loud warning rather than a silent omission: without
+  # it she does not know who you are and every answer is subtly generic.
+  required: true
+  # Honcho proposes edits; they queue for your approval and are never applied directly.
+  honcho_proposals: true
+  auto_apply_proposals: false
+
+# --- Tier 2: episodic log ----------------------------------------------------
+# Append-only, never edited, only compressed.
+episodic:
+  db: /srv/friday/db/episodic.db
+  # No UPDATE and no DELETE in the public API. Compression rewrites into summary rows and
+  # archives the originals; it does not edit in place.
+  append_only: true
+  wal: true
+  archive_dir: /srv/friday/db/archive
+
+# --- Tier 3: vault -----------------------------------------------------------
+# Markdown, four directories, written by the consolidation loop and editable by you.
+vault:
+  path: /srv/friday/vault
+  dirs: [daily, projects, people, ideas]
+  # Git-backed, so a bad consolidation is revertible and the supervisor can revert to the
+  # pre-run commit after a budget kill.
+  git: true
+  # One commit per consolidation run, not per note. Per-note commits break the revert.
+  commit_per_run: true
+
+# --- Tier 4: index -----------------------------------------------------------
+index:
+  qdrant_url: http://127.0.0.1:6333
+  collection: friday
+  fts_db: /srv/friday/db/episodic.db     # FTS5 lives in the same file as the log
+  embed_alias: embed
+  rerank_alias: rerank
+  embed_dim: 1024                        # bge-m3. Changing the model invalidates every vector.
+  chunk_tokens: 512
+  chunk_overlap_tokens: 64
+
+# --- Retrieval ---------------------------------------------------------------
+# Spec section 7, exactly: "expand query -> parallel keyword + vector (top 30 each) ->
+# dedupe -> rerank to top 8 -> recency boost."
+retrieve:
+  expansions: 3
+  keyword_k: 30
+  vector_k: 30
+  # Merged by reciprocal rank fusion, not score averaging: the two systems produce scores
+  # on incomparable scales and normalising them is a knob that drifts silently.
+  fusion: rrf
+  rerank_to: 8
+  # Recency boost applied AFTER reranking. Applying it before means a recent irrelevant
+  # document outranks an old exact answer.
+  recency_boost: true
+  recency_half_life_days: 30
+  # Below this rerank score a candidate is dropped even if the window has room. Padding
+  # the context to use the budget is how retrieval degrades invisibly.
+  min_rerank_score: 0.15
+  context_tokens: 6000
+
+  # Spec section 7: "Always inject current date/time and today's calendar; local models
+  # are hopeless at temporal reasoning otherwise." Spec section 10 says it again: resolve
+  # dates in code, never in the prompt.
+  always_inject:
+    datetime: true
+    todays_calendar: true
+  # Spec section 7: "Always carry source and timestamp so she can say 'you told me this in
+  # March, it may be stale.'" Not decoration - it is how she qualifies a stale answer, and
+  # how you find the source of a wrong one.
+  carry_provenance: true
+  stale_after_days: 90        # older than this, the answer is qualified rather than asserted
+
+# --- Bounded memory ----------------------------------------------------------
+# Spec section 7: "when memory fills, the agent must consolidate before it can save
+# anything new - is better than nightly compression. Scarcity forces curation."
+#
+# ADR-0007. This is NOT a nightly compression job. The write path blocks. A queue that
+# grows while waiting is just unbounded memory in a different file.
+bounded:
+  enabled: true
+  # The bound. Tune against the eval set: spec section 10 warns of retrieval collapse
+  # around 10k documents, so the ceiling should keep the live corpus well under that.
+  max_live_events: 8000
+  max_vault_notes: 2000
+  # At this fraction of the bound, consolidation starts opportunistically so the blocking
+  # case is rare. It does not replace the block; it makes it uncommon.
+  soft_start_at: 0.85
+  # At the bound, writes block until consolidation completes. This is the forcing function.
+  block_writes_when_full: true
+  # A scheduled pass is allowed as well, and is not the only consolidation. Section 7 is
+  # explicit that consolidate-when-full is the mechanism.
+  scheduled_pass: "03:00"
+
+# --- Eval --------------------------------------------------------------------
+# Spec section 7: "Build the eval set before the ingestion." Spec section 9: the supervisor
+# only advances the known-good tag after a full eval pass, so this is part of the rollback
+# mechanism and not just a development tool.
+eval:
+  questions: eval/questions.yaml
+  pass_threshold: 20
+  total: 25
+  results_dir: eval/results

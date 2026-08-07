@@ -1,0 +1,95 @@
+# LiteLLM. Transport only.
+#
+# Spec section 8: "Two layers. LiteLLM is transport, the agent frameworks are policy."
+# This file says where an alias points. config/agents.yaml says who may use it and with
+# what budget. Swapping a model is one line here and nothing there.
+#
+# Bound to 127.0.0.1. Spec section 9: never a port forward.
+
+model_list:
+  # Spec section 8's model_list, expanded with the two retrieval models that section 1
+  # lists as always-resident but section 8's example omits.
+  - model_name: daily
+    litellm_params:
+      model: openai/qwen36-27b
+      api_base: http://127.0.0.1:8080/v1
+      timeout: 600
+    model_info: { mode: chat, notes: "Qwen 3.6 27B @ Q4. The 24 GB sweet spot." }
+
+  - model_name: fast
+    litellm_params:
+      model: openai/gemma4-4b
+      api_base: http://127.0.0.1:8081/v1
+      timeout: 60
+    model_info:
+      mode: chat
+      notes: >
+        Gemma 4 4B @ Q4. Scrutiny scoring, intent, classification, voice turns.
+        Note: spec section 1's resident list names a "Qwen3 4B router" while section 8's
+        litellm.yaml names gemma4-4b for this alias. Section 8 is the config, so it wins
+        here. Either fits the slot; if you switch, change this line only.
+
+  - model_name: coder
+    litellm_params:
+      model: openai/devstral2
+      api_base: http://127.0.0.1:8083/v1
+      timeout: 1200
+    model_info: { mode: chat, notes: "Devstral-2 22B @ Q4. On demand; evicts daily." }
+
+  - model_name: vision
+    litellm_params:
+      model: openai/qwen3-vl
+      api_base: http://127.0.0.1:8084/v1
+      timeout: 300
+    model_info: { mode: chat, notes: "Qwen3-VL @ Q4. On demand; evicts daily." }
+
+  - model_name: embed
+    litellm_params:
+      model: openai/bge-m3
+      api_base: http://127.0.0.1:8082/v1
+      timeout: 120
+    model_info: { mode: embedding, notes: "bge-m3. Resident." }
+
+  - model_name: rerank
+    litellm_params:
+      model: openai/bge-reranker-v2-m3
+      api_base: http://127.0.0.1:8085/v1
+      timeout: 120
+    model_info: { mode: rerank, notes: "bge-reranker-v2-m3. Resident. The top-8 step." }
+
+router_settings:
+  # Spec section 8, verbatim. daily degrades to fast rather than failing; coder degrades
+  # to daily. Both fallbacks stay on-box, so they cannot violate sensitivity routing.
+  #
+  # There is deliberately no fallback for embed or rerank: silently answering a retrieval
+  # query with a different embedding model produces vectors from a different space, which
+  # degrades quietly and is very hard to diagnose from the eval score alone. Better to fail.
+  fallbacks:
+    - { "daily": ["fast"] }
+    - { "coder": ["daily"] }
+  allowed_fails: 2
+  cooldown_time: 30
+
+litellm_settings:
+  num_retries: 2
+  request_timeout: 600
+  drop_params: true
+  # Nothing leaves this host. LiteLLM ships integrations for hosted observability; none
+  # are enabled and none may be. Tracing goes to a self-hosted Langfuse (spec section 1).
+  success_callback: []
+  failure_callback: []
+
+general_settings:
+  # Spec section 8: "Bind LiteLLM to 127.0.0.1 only and issue virtual keys per agent -
+  # Hermes shipped a hardening release specifically patching a LiteLLM credential
+  # exposure."
+  #
+  # The master key exists to MINT the per-agent virtual keys and for nothing else. No
+  # service is configured with it; each gets its own key from
+  # /srv/friday/secrets/litellm-keys.yaml, sops-encrypted. install/05-litellm-keys.sh
+  # mints them.
+  master_key: os.environ/LITELLM_MASTER_KEY
+  telemetry: false
+  # Virtual keys need a store. SQLite under the install root, not Postgres, and not
+  # anywhere off-box.
+  database_url: os.environ/LITELLM_DATABASE_URL

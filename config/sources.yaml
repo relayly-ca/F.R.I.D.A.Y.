@@ -1,0 +1,131 @@
+# Senses. Spec section 2's SENSES row: Matrix db, CalDAV, notmuch, files, browser, Home
+# Assistant.
+#
+# EVERYTHING HERE IS UNTRUSTED INPUT. Spec section 9: "an email she reads at 3am is
+# untrusted input with a path to your shell", and untrusted-content tagging is "mitigation,
+# not a fix - assume it can fail."
+#
+# So the tagging is done, and the real boundary is elsewhere: ingested text reaches a model
+# only through the scorer, which has tools: [] (config/agents.yaml). See ADR-0006.
+#
+# Spec section 6 puts these in two waves: week 2 is Matrix and calendar, week 4 is notmuch,
+# files, browser and Home Assistant. Week 4's rule is "eval score holds after each new
+# source" - so enable them ONE AT A TIME and re-run the eval between each.
+
+version: 1
+
+defaults:
+  enabled: false
+  poll_interval_s: 300
+  sink: /srv/friday/db/sources.db
+  # After downtime a source can have a large backlog. Cap it, or triage floods.
+  max_events_per_poll: 500
+  # Every event is wrapped and marked before it is stored. Mitigation, not a fix.
+  tag_untrusted: true
+
+sources:
+
+  matrix:
+    module: friday.ingest.matrix
+    week: 2
+    enabled: false
+    poll_interval_s: 15
+    sensitivity: messages
+    config:
+      # Read Conduit's own database rather than the client-server API. Hermes already holds
+      # a sync token; two consumers sharing one means one of them silently misses messages.
+      conduit_db: /srv/friday/db/conduit
+      homeserver: http://127.0.0.1:7424
+      # Bridged rooms carry other people's words. Spec section 10: bridge instability,
+      # WhatsApp especially, re-link every few months.
+      include_bridged_rooms: true
+
+  caldav:
+    module: friday.ingest.caldav
+    week: 2
+    enabled: false
+    poll_interval_s: 300
+    sensitivity: any
+    config:
+      url: http://127.0.0.1:5232/
+      # Credentials by env var name, never by value. Spec section 9.
+      username_env: RADICALE_USER
+      password_env: RADICALE_PASSWORD
+      calendars: [personal, work]
+      horizon_days: 90
+      backfill_days: 365
+      # Expand recurrences into concrete occurrences. A retrieval index cannot match
+      # "Thursday" against an RRULE, and week 2's test is "what's my week look like".
+      expand_recurring: true
+
+  notmuch:
+    module: friday.ingest.notmuch
+    week: 4
+    enabled: false
+    poll_interval_s: 600
+    sensitivity: messages
+    config:
+      # Spec section 1: mbsync + notmuch. mbsync syncs, notmuch indexes, this reads the
+      # notmuch index. Network handling and credentials stay entirely out of this process.
+      database: /srv/friday/db/notmuch
+      maildir: /srv/friday/db/mail
+      query: "not tag:spam and not tag:deleted"
+      # Never fetch remote images or follow links from a body. Both are exfiltration
+      # channels and neither is needed to index the text.
+      fetch_remote_content: false
+      # Attachment names, not contents. Parsing an attacker-supplied PDF means running a
+      # parser with a CVE history against hostile input.
+      index_attachments: false
+
+  files:
+    module: friday.ingest.files
+    week: 4
+    enabled: false
+    poll_interval_s: 120
+    sensitivity: vault
+    config:
+      roots: [/srv/friday/vault, /home/ak/documents]
+      include_globs: ["**/*.md", "**/*.txt", "**/*.org", "**/*.pdf"]
+      # A security control, not a performance one. Spec section 9 says she gets
+      # capabilities and not credentials; indexing a key would route around that entirely,
+      # because any query could then surface it into a context window.
+      exclude_globs: ["**/.git/**", "**/node_modules/**", "**/*.key", "**/*.pem", "**/secrets/**"]
+      max_file_bytes: 10485760
+      # The vault is a watched root and consolidation writes to it. Suppress events from
+      # inside a consolidation run, or the index fills with copies of itself.
+      suppress_during_consolidation: true
+
+  browser:
+    module: friday.ingest.browser
+    week: 4
+    enabled: false
+    poll_interval_s: 900
+    sensitivity: any
+    config:
+      history_db: ~/.mozilla/firefox/*.default-release/places.sqlite
+      copy_before_read: true       # locked while the browser runs
+      # URL, title and visit time only. Never refetch a page: that is egress, and weeks
+      # later you get what the site serves a bot rather than what you read.
+      capture: [url, title, visit_time]
+      exclude_url_patterns: ["^https?://(localhost|127\\.0\\.0\\.1)", "banking", "health"]
+
+  homeassistant:
+    module: friday.ingest.homeassistant
+    week: 4
+    enabled: false
+    poll_interval_s: 60
+    sensitivity: any
+    config:
+      base_url: http://127.0.0.1:8123
+      token_env: HASS_TOKEN
+      mode: websocket              # polling a state machine misses transitions
+      entity_include: ["person.*", "binary_sensor.*_occupancy", "sensor.*_temperature"]
+      # Frames are not text. Cameras belong to the vision alias, not to ingestion.
+      entity_exclude: ["camera.*"]
+
+retention:
+  # sources.db is a landing zone, not the archive. The episodic log is the durable record.
+  sources_db_days: 30
+  # Never prune a row that has not been consolidated AND indexed, whatever its age.
+  require_consolidated: true
+  require_indexed: true

@@ -1,0 +1,147 @@
+# Agents: who may use which alias, with what tools and what budget.
+#
+# Spec section 8: LiteLLM is transport, this is policy.
+# Spec section 9: "Per-task tool allowlists. Research gets search + read. Coding gets git
+# + shell on one branch. Never a global grant." And: "Hard budgets. Tokens and wall clock
+# per task, enforced by the supervisor. Runaway loops are the default failure, not an edge
+# case."
+#
+# Every entry needs all seven fields. A missing one is a validation error, never a
+# default: an agent with no budget is a bug, not an unlimited agent.
+#
+#   model         alias from config/litellm.yaml
+#   tools         allowlist; [] means none, and omitting the key is invalid
+#   max_tokens    hard per-task ceiling
+#   wall_clock_s  hard per-task ceiling
+#   temperature   float
+#   sensitivity   local_only | any
+#   can_write     bool
+
+version: 1
+
+# Tool allowlists match on tool name AND on input pattern, not on name alone. That is what
+# makes "shell on one branch" expressible rather than aspirational. See ADR-0010: the shape
+# is borrowed from OpenCode's permission config, which is the clearest expression of this
+# idea in any project reviewed.
+tool_catalog:
+  memory_read:   { writes: false, week: "2-3" }
+  vault_write:   { writes: true,  week: "2-3" }
+  calendar_read: { writes: false, week: 2 }
+  mail_read:     { writes: false, week: 4 }
+  search:        { writes: false, week: 5, notes: "Local index. No web egress by default." }
+  fs_read:       { writes: false, week: 5 }
+  git:           { writes: true,  week: 5, notes: "Branch only. Never a push to a default branch." }
+  shell:         { writes: true,  week: 5, notes: "Inside the OpenHands container only. No host fs, no network." }
+  ha_read:       { writes: false, week: 4 }
+
+agents:
+
+  scorer:
+    # Spec section 4: "the 4B router does the scoring." Seven numbers, never an action,
+    # and no tools at all - so injected instructions in the scored text have nothing to
+    # call. This is the narrow point the whole security model rests on.
+    model: fast
+    tools: []
+    max_tokens: 400
+    wall_clock_s: 15
+    temperature: 0.0
+    sensitivity: local_only
+    can_write: false
+
+  router:
+    # Intent and mode classification. Spec section 6 week 6: mode detection, so she knows
+    # a brainstorm from a request and shuts up accordingly.
+    model: fast
+    tools: []
+    max_tokens: 200
+    wall_clock_s: 10
+    temperature: 0.0
+    sensitivity: local_only
+    can_write: false
+
+  conversation:
+    # Voice turns and chat. Spec section 6 week 4-5: under 800ms. Latency is a correctness
+    # property here, which is why this is `fast` and not `daily`.
+    model: fast
+    tools: [memory_read, calendar_read]
+    max_tokens: 4000
+    wall_clock_s: 30
+    temperature: 0.7
+    sensitivity: local_only
+    can_write: false
+
+  consolidator:
+    # Spec section 7: consolidation runs when memory fills, not on a timer. High volume,
+    # so `fast`. Quality is bounded by the extraction schema, not by model size.
+    model: fast
+    tools: [memory_read, vault_write]
+    max_tokens: 16000
+    wall_clock_s: 900
+    temperature: 0.3
+    sensitivity: local_only
+    can_write: true
+
+  curator:
+    # Spec section 8: `hermes model set auxiliary.curator fast` - a weekly job that does
+    # not need 27B. Strict JSON out; a parse failure is a failure, not a retry freeform.
+    model: fast
+    tools: [memory_read]
+    max_tokens: 8000
+    wall_clock_s: 300
+    temperature: 0.2
+    sensitivity: local_only
+    can_write: false
+
+  researcher:
+    # The `propagate` target. Spec section 9: "Research gets search + read." The largest
+    # read-only budget in the system, and it cannot write.
+    model: daily
+    tools: [search, fs_read, memory_read, mail_read]
+    max_tokens: 150000
+    wall_clock_s: 3600
+    temperature: 0.4
+    sensitivity: local_only
+    can_write: false
+
+  coder:
+    # Spec section 9: "Coding gets git + shell on one branch." Delegates to OpenHands,
+    # which supplies the Docker boundary (ADR-0010). Branch only, human merge - "not once,
+    # not for small things."
+    model: coder
+    tools: [git, shell, fs_read]
+    max_tokens: 200000
+    wall_clock_s: 5400
+    temperature: 0.2
+    sensitivity: local_only
+    can_write: true
+
+  vision:
+    model: vision
+    tools: [fs_read]
+    max_tokens: 8000
+    wall_clock_s: 120
+    temperature: 0.3
+    sensitivity: local_only
+    can_write: false
+
+  digest:
+    # Spec section 6 week 3: morning_digest. Runs against consolidated memory, writes a
+    # daily note, and is the visible sign that the vault grows without you writing in it.
+    model: daily
+    tools: [memory_read, calendar_read, vault_write]
+    max_tokens: 32000
+    wall_clock_s: 900
+    temperature: 0.4
+    sensitivity: local_only
+    can_write: true
+
+# Spec section 8: "Route by sensitivity first, capability second. Vault, health, messages
+# and finances resolve to local aliases by config, not by preference."
+#
+# Resolved BEFORE any capability consideration. A more capable non-local model is refused,
+# not preferred. There is deliberately no wildcard entry.
+sensitivity_routing:
+  vault:    local_only
+  health:   local_only
+  messages: local_only
+  finances: local_only

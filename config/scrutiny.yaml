@@ -1,0 +1,218 @@
+# Adaptive Scrutiny: the seven axes and the threshold table.
+#
+# Spec section 4. This is the layer nobody else ships, and the reason the whole system is
+# usable rather than annoying: scoring rejects low-value signals BEFORE the expensive model
+# is invoked. That is the difference between an assistant that pings you forty times a day
+# and one you trust.
+#
+# The split that makes this work:
+#   scrutiny/score.py   may call a model. It produces seven numbers. Never an action.
+#   scrutiny/policy.py  may not call a model. It reads this table and produces an action.
+#
+# Injection can move a score. It cannot move a rule. See ADR-0006: assume untrusted-content
+# tagging fails, and put the real boundary somewhere that survives that.
+#
+# Scoring runs on `fast` (the 4B router). Using `daily` here would defeat the entire
+# economic argument for the layer.
+
+version: 1
+
+# --- The seven axes ----------------------------------------------------------
+# Exactly these seven, in this order. Spec section 4. Adding or removing one is a schema
+# change touching the scorer, this table, and the tests, and it needs an ADR.
+#
+# All are 0.0-1.0 floats except `conflict`, which is a boolean: a signal either contradicts
+# something already recorded or it does not, and a 0.4 conflict is not a thing.
+axes:
+  urgency:
+    type: float
+    describe: "How soon this stops being actionable. A meeting in an hour, not a meeting in June."
+  impact:
+    type: float
+    describe: "How much it matters if handled well or badly. Independent of urgency; most urgent things are not important."
+  novelty:
+    type: float
+    describe: "Is this new. Something already in the vault scores near zero however good it is."
+  risk:
+    type: float
+    describe: "Cost of acting and being wrong. Sending, spending, deleting, and telling someone something all score high."
+  confidence:
+    type: float
+    describe: "How sure the scorer is of its own read. Low confidence is a reason to watch, never a reason to guess."
+  specificity:
+    type: float
+    describe: >
+      How completely the action is already determined. High means you could execute it now
+      with no further thinking. Low means the goal is clear and the path is not. This axis
+      is what separates `act` from `propagate`.
+  conflict:
+    type: bool
+    describe: "Does this contradict something already recorded. A human resolves contradictions."
+
+# --- The five actions --------------------------------------------------------
+# Spec section 4. `act` and `propagate` are distinct and collapsing them is the mistake to
+# avoid: `act` does the thing, `propagate` hands it to a bounded specialist with its own
+# budget, allowlist and branch.
+actions:
+  act:       "Do it now, report after"
+  ask:       "Surface it, wait for you"
+  watch:     "Not yet, re-evaluate on new information"
+  ignore:    "Below threshold, log and drop"
+  propagate: "Hand to a bounded specialist"
+
+# --- Thresholds --------------------------------------------------------------
+# Tune these against real corrections, not against intuition. Spec section 10: she will
+# flag your complaining as a brainstorm. Every correction is logged from day one and that
+# is the fine-tuning set.
+thresholds:
+  risk_high: 0.60          # at or above, nothing happens without you
+  confidence_low: 0.45     # below, watch rather than guess
+  confidence_high: 0.75    # required before anything autonomous
+  novelty_low: 0.20        # at or below, she already knows this
+  impact_low: 0.25         # below, and not urgent, it is noise
+  urgency_high: 0.70
+  specificity_high: 0.70   # at or above, the action is determined: act
+  specificity_low: 0.40    # below, with real impact: propagate to a specialist
+
+# --- The rule table ----------------------------------------------------------
+# Evaluated top to bottom. FIRST match wins and evaluation stops. Order is the design:
+# the guards come before the permissions, so no combination of high scores can route
+# around them.
+#
+# Every rule has a name. Every decision records the name of the rule that produced it. A
+# decision with no rule name is a bug, not a fallback, and there is deliberately no
+# implicit default at the end of this list - `floor` is explicit.
+#
+# `when` is a boolean expression over the seven axes plus `thresholds.*`. It is evaluated
+# by a small restricted evaluator in scrutiny/policy.py, not by eval(): this table is
+# data, and data that ingested text can influence must never become code.
+rules:
+
+  # -- Guards. These fire first and cannot be overridden by any other score. ---
+
+  - name: high_risk_always_asks
+    when: "risk >= thresholds.risk_high"
+    action: ask
+    why: >
+      Risk dominates every other axis. A novel, high-impact, high-confidence, perfectly
+      specific action that is also high-risk is still an ask. Confidence is not
+      authorisation. This is the rule that makes bounded autonomy real, so it fires even
+      when everything else argues for acting.
+
+  - name: conflict_asks
+    when: "conflict"
+    action: ask
+    why: >
+      She can know there is a contradiction; she cannot know which side is true. Resolving
+      it silently means overwriting a true memory with a false one, and the vault has no
+      way to notice.
+
+  - name: unverified_speaker_asks
+    when: "context.channel == 'voice' and not context.speaker_verified"
+    action: ask
+    why: >
+      Spec section 9: Resemblyzer gate on every voice command. An unverified voice may be
+      answered but may not cause anything consequential. The refusal is spoken, not silent.
+
+  - name: low_confidence_watches
+    when: "confidence < thresholds.confidence_low"
+    action: watch
+    why: >
+      Uncertainty needs somewhere to go that is neither acting on a guess nor discarding
+      something that may matter. Deliberately not an ask: interrupting you every time the
+      scorer is unsure trains you to approve reflexively, which is worse than not asking.
+
+  # -- Floors. Cheap rejections, before anything expensive happens. ------------
+
+  - name: already_known
+    when: "novelty <= thresholds.novelty_low"
+    action: ignore
+    why: >
+      A good idea already in the vault is not news. Without this, the same idea is
+      re-proposed every time it is mentioned and the inbox becomes something you stop
+      reading.
+
+  - name: below_threshold
+    when: "impact < thresholds.impact_low and urgency < thresholds.urgency_high"
+    action: ignore
+    why: >
+      Novel is not the same as worth knowing. Most of what a microphone and a mail spool
+      observe is new and does not matter. Keeping all of it produces a retrieval corpus
+      full of noise by month two.
+
+  # -- Permissions. Only reachable past every guard and floor above. -----------
+
+  - name: determined_and_safe_acts
+    when: >
+      confidence >= thresholds.confidence_high
+      and specificity >= thresholds.specificity_high
+      and risk < thresholds.risk_high
+      and (impact >= thresholds.impact_low or urgency >= thresholds.urgency_high)
+    action: act
+    why: >
+      Everything is known: what to do, that it is worth doing, and that being wrong is
+      cheap. She does it and reports after. The narrowest rule in the table, and it should
+      stay that way.
+
+  - name: important_but_undetermined_propagates
+    when: >
+      confidence >= thresholds.confidence_high
+      and specificity < thresholds.specificity_low
+      and risk < thresholds.risk_high
+      and impact >= 0.60
+    action: propagate
+    why: >
+      The goal is clear and the path is not. That is exactly the shape of work for a
+      bounded specialist: a token budget, a wall clock, a tool allowlist and a branch.
+      Specificity is what separates this from `act`.
+
+  - name: urgent_and_undetermined_asks
+    when: "urgency >= thresholds.urgency_high and specificity < thresholds.specificity_low"
+    action: ask
+    why: >
+      Urgent and unclear is the worst combination to hand to a specialist: the budget will
+      expire before the ambiguity resolves. Ask instead; you will resolve it in ten seconds.
+
+  - name: partially_determined_watches
+    when: "specificity < thresholds.specificity_high"
+    action: watch
+    why: >
+      Worth something, not yet clear enough to act on and not important enough to spend a
+      specialist on. Re-evaluated when related information arrives.
+
+  # -- Floor. Explicit, so no decision is ever produced without a named rule. --
+
+  - name: floor
+    when: "true"
+    action: ignore
+    why: >
+      Nothing above matched. Deliberately an explicit rule rather than an implicit default,
+      so every decision in scrutiny.db names the rule that produced it and this one shows
+      up in the accuracy report like any other. A `floor` rate that climbs means the table
+      has a gap.
+
+# --- Corrections -------------------------------------------------------------
+# Spec section 10: "Log every correction from day one - that's your fine-tuning set."
+corrections:
+  db: /srv/friday/db/scrutiny.db
+  # An override records the decision id, the rule that fired, the seven scores, the action
+  # taken and the action you wanted. Recording only the new action teaches nothing: the
+  # useful signal is which RULE was wrong on which SCORES.
+  record_scores: true
+  record_rule: true
+
+# --- Dispatch ----------------------------------------------------------------
+dispatch:
+  # `ask` goes to the inbox and stays there. There is no timeout that converts an ask into
+  # an action, and no configuration key that adds one. A system that acts because you did
+  # not answer in time is not bounded, it is delayed-unbounded.
+  ask_expires: false
+
+  # `propagate` targets, and their budgets, are in config/agents.yaml. A specialist without
+  # a budget is a bug, not an unlimited specialist.
+  propagate_to: researcher
+
+  # `watch` re-evaluates when a related signal arrives, or after this long, whichever comes
+  # first. Re-evaluation is a fresh score, not a reuse of the old one.
+  watch_reevaluate_after_hours: 72
+  watch_max_age_days: 14      # past this, a watched signal is dropped and logged

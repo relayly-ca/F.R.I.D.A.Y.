@@ -1,0 +1,123 @@
+# FRIDAY global settings.
+#
+# Loaded by friday/config.py and validated with pydantic. An unknown key is a load error,
+# not an ignored line: a typo must not silently grant an unbounded budget.
+#
+# Secrets never appear here. Spec section 9: age/sops, decrypted per call by a helper she
+# cannot read.
+
+[general]
+principal = "ak"
+timezone = "UTC"            # set to your zone; calendar answers are wrong otherwise
+log_level = "info"
+# Logging full prompts logs retrieved vault content into the journal. Debug only.
+debug_prompts = false
+
+[paths]
+# Spec section 11's tree. install/tree.sh creates exactly this.
+root   = "/srv/friday"
+vault  = "/srv/friday/vault"
+db     = "/srv/friday/db"
+agent  = "/srv/friday/agent"
+core   = "/srv/friday/agent/core"     # owned by fridaysup, mode 0755. Spec section 9.
+loops  = "/srv/friday/loops"
+ingest = "/srv/friday/ingest"
+work   = "/srv/friday/work"           # agent branches, human merges
+eval   = "/srv/friday/eval"
+logs   = "/srv/friday/logs"
+models = "/srv/friday/models"
+secrets = "/srv/friday/secrets"
+
+[config]
+# The four files that carry real policy. Split by concern so a change to the scrutiny
+# thresholds does not touch model routing.
+scrutiny = "config/scrutiny.yaml"
+agents   = "config/agents.yaml"
+memory   = "config/memory.yaml"
+sources  = "config/sources.yaml"
+
+[models]
+litellm_base_url = "http://127.0.0.1:4000"
+# Spec section 8: virtual keys per agent, not a shared master key. Minted by
+# install/05-litellm-keys.sh into this sops-encrypted file.
+virtual_keys = "/srv/friday/secrets/litellm-keys.yaml"
+
+[tracing]
+# Spec section 1: Langfuse, "you will need this at 3am". Self-hosted, loopback.
+enabled = true
+host = "http://127.0.0.1:3000"
+# Keys come from the sops-encrypted env file, never from here.
+sample_rate = 1.0
+
+[voice]
+# Weeks 4-5. Do not start before the eval passes; spec section 6 says do not reorder.
+enabled = false
+# Spec section 1: faster-whisper large-v3-turbo.
+stt_model = "large-v3-turbo"
+tts_engine = "kokoro"          # kokoro | chatterbox
+wake_word = "friday"
+wake_threshold = 0.6
+# Spec section 5: two triggers. Wake word for hands-busy, clap for across-the-room.
+# A clap physically cannot false-trigger from speech.
+clap_to_wake = true
+clap_exit_phrase = "ok"        # returns to standby
+# Spec section 5 and 9: Resemblyzer gate on every voice command. Below this cosine
+# similarity, consequential actions are refused and the refusal is spoken.
+speaker_threshold = 0.75
+require_speaker_match = true
+# Spec section 6: under 800ms, end of speech to first audio out.
+latency_budget_ms = 800
+
+[output]
+# Spec section 5, from cc-hermes-cc: the model decides WHERE the answer goes. System
+# questions answered by voice with no window; "where is X" opens a map tile; "show me X"
+# opens images; data questions render a chart. Close by voice.
+ai_chosen_surface = true
+surfaces = ["voice", "wall", "map", "image", "chart", "text"]
+default_surface = "voice"
+
+[supervisor]
+# Spec section 9: ~150 lines, different user, outside her reach.
+health_check_interval_s = 30
+failures_before_revert = 3
+# The known-good tag advances only after a full eval pass. ADR-0009: without that,
+# "last-known-good" degrades to "last thing that started without crashing".
+known_good_requires_eval = true
+managed_units = [
+  "friday-openjarvis.service",
+  "friday-hermes.service",
+  "friday-scrutiny.service",
+  "friday-voice.service",
+]
+
+[budgets]
+# Spec section 9: "Runaway loops are the default failure, not an edge case." Per-task
+# ceilings are in config/agents.yaml; these are the aggregates above them.
+tokens_per_hour = 2000000
+tokens_per_day = 20000000
+concurrent_tasks = 2
+warn_at = 0.80
+soft_stop_at = 0.95      # refuse new tool calls; the current turn may finish
+hard_kill_at = 1.00
+sigterm_grace_s = 10
+# A killed task keeps its branch for inspection, has its vault writes reverted, and
+# reports to the inbox. Nothing half-applied.
+keep_branch_on_kill = true
+revert_vault_on_kill = true
+
+[modes]
+# Spec section 6 week 6: "She shuts up and takes notes on command." Mode detection runs on
+# the router; brainstorm mode suppresses everything except capture.
+enabled = false
+default = "assist"
+available = ["assist", "brainstorm", "focus", "away"]
+# In brainstorm she captures and does not interject. Spec section 10 warns she will
+# misread complaining as a brainstorm, so every mode switch is logged as a correction
+# candidate.
+brainstorm_suppresses = ["act", "propagate", "ask"]
+
+[kill_switch]
+# Spec section 9: "Kill switch from your phone plus a physical button."
+phone = true                      # exposed over the mesh, never a port forward
+gpio_button = false               # set true and name the pin once wired
+gpio_pin = 0
