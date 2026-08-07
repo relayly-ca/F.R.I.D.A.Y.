@@ -25,7 +25,7 @@ Format: Context / Decision / Consequences / Date.
 | 0009 | The supervisor gates the known-good tag | spec §9 | Accepted |
 | 0010 | OpenHands keeps the autonomous-coding slot; OpenCode is out | this session | Accepted |
 | 0011 | pydantic-ai is the agent and tool library; LiteLLM stays transport | this session | Accepted |
-| 0012 | A workflow graph layer: pydantic-graph for typing, ours for state and gates | spec §6, §9 | Accepted |
+| 0012 | A workflow graph layer: pydantic-graph for typing, ours for state and gates | **extends spec §1** | Accepted |
 | 0013 | The ratchet, and the writer is never the checker | spec §10 | Accepted |
 | 0014 | The seventh axis, and whether there is an eighth | spec §4 | **Proposed** |
 | 0015 | Candidates evaluated and cut, August 2026 | spec §3 | Accepted |
@@ -474,6 +474,12 @@ entries load into capabilities rather than being re-expressed.
 ---
 
 ## ADR-0012: A workflow graph layer: pydantic-graph for typing, ours for state and gates
+
+**This ADR extends spec §1.** It adds a row to the stack table that the spec does not have.
+The preamble to this file requires that to be said explicitly rather than arrived at, so:
+the spec's table is otherwise unchanged, no existing row is replaced, and the claim is that
+§1 has a gap rather than an error. ADR-0001's bar applies to the new row like any other —
+one owner, and adding anything that overlaps it needs an ADR.
 
 **Context**
 
