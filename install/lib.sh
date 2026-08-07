@@ -10,13 +10,15 @@
 ROOT=${ROOT:-/srv/friday}
 REPO=${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 
-_RED=$'\033[31m'; _GRN=$'\033[32m'; _YEL=$'\033[33m'; _OFF=$'\033[0m'
-[[ -t 1 ]] || { _RED=""; _GRN=""; _YEL=""; _OFF=""; }
+# The UI layer. gum-backed, with a plain fallback for when gum is not installed yet - which
+# is the normal state during the step that installs it.
+# shellcheck source=install/ui.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
 
-log()  { printf '\n%s=== %s%s\n' "$_GRN" "$*" "$_OFF"; }
-info() { printf '  %s\n' "$*"; }
-warn() { printf '  %sWARN%s  %s\n' "$_YEL" "$_OFF" "$*"; }
-die()  { printf '%sERROR%s %s\n' "$_RED" "$_OFF" "$*" >&2; exit 1; }
+log()  { ui_header "$*"; }
+info() { ui_ok "$*"; }
+warn() { ui_warn "$*"; }
+die()  { ui_die "$*"; }
 
 need_root() { [[ $EUID -eq 0 ]] || die "Run as root: sudo bash $0"; }
 

@@ -58,6 +58,16 @@ chmod 0644 /etc/friday/llama/*.env /etc/friday/litellm.yaml
 friday_profile > /etc/friday/profile
 chmod 0644 /etc/friday/profile
 
+# --- The capability helper ----------------------------------------------------
+# ADR-0005. Root-owned and NOT readable by friday: that is the boundary, not a detail.
+log "Capability helper"
+install -d -m 0755 -o root -g root "$ROOT/bin"
+install -m 0755 -o root -g root "$REPO/bin/secret-helper" "$ROOT/bin/secret-helper"
+info "$ROOT/bin/secret-helper"
+sudo -u friday test -r "$ROOT/secrets/age.key" 2>/dev/null \
+  && die "the friday user can read the age identity. ADR-0005 is not in force." \
+  || info "friday cannot read $ROOT/secrets/"
+
 # --- Install units ------------------------------------------------------------
 log "systemd units"
 for unit in "$REPO"/systemd/*.service "$REPO"/systemd/*.timer; do

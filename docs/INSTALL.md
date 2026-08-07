@@ -169,6 +169,7 @@ Spec §9: from your phone plus a physical button.
 
 ```bash
 sudo pacman -Syu --needed --noconfirm \
+  gum \
   base-devel git cmake ninja pkgconf \
   cuda cudnn nvidia-utils \
   uv python \
@@ -199,6 +200,7 @@ What each group is for:
 | `isync notmuch python-notmuch` | W4 | Mail. mbsync syncs, notmuch indexes |
 | `nodejs npm` | W6 | The wall surface |
 | `polkit` | W1 | The supervisor's narrow privilege grant |
+| `gum` | W1 | The installer UI. `install.sh` bootstraps it before anything else |
 
 ---
 

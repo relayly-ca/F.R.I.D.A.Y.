@@ -18,7 +18,9 @@ User=friday
 Group=friday
 WorkingDirectory=/srv/friday
 
-ExecStartPre=/srv/friday/bin/secret-helper agent-key openjarvis /run/friday/openjarvis.env
+# '+' runs this one line as root. The helper must read root-owned
+# secrets; the service itself must not. ADR-0005.
+ExecStartPre=+/srv/friday/bin/secret-helper agent-key openjarvis /run/friday/openjarvis.env
 EnvironmentFile=/run/friday/openjarvis.env
 RuntimeDirectory=friday
 RuntimeDirectoryMode=0700

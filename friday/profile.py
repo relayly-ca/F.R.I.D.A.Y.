@@ -30,6 +30,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from friday.config import ConfigError, repo_root
+from friday.models import Sensitivity
 
 PROFILE_FILE = "/etc/friday/profile"
 DEFAULT_PROFILE = "target"
@@ -162,45 +163,218 @@ def verify_constraints() -> list[str]:
     """Check that the active profile has not relaxed anything it may not.
 
     `config/profiles.yaml` lists what a profile may and may not change. The second list is
-    the interesting one, and it is CHECKED rather than trusted: a profile that could turn off
-    the scorer's empty tool list, or unpin sensitivity routing, would be a way to disable a
-    security property by choosing a config file.
+    CHECKED rather than trusted: a profile that could turn off the scorer's empty tool list,
+    or unpin sensitivity routing, would be a way to disable a security property by choosing a
+    config file. `install/04-services.sh` refuses to install any unit when this returns
+    anything.
+
+    Note what this deliberately does NOT do: it does not read the `may_not_change` list and
+    interpret it. That list is prose for a human. Each invariant below is asserted directly
+    against the live configuration, because a check driven by a string in the same file it is
+    checking can be disabled by editing that string.
 
     Returns:
-        Violations, empty if clean. Callers treat a non-empty result as fatal.
-
-    Implemented in W1 alongside install/04-services.sh, which refuses to install units when
-    this returns anything.
+        Violations, empty if clean.
     """
-    raise NotImplementedError(
-        "friday.profile.verify_constraints is implemented in W1. It re-reads the invariants "
-        "from config/agents.yaml and config/memory.yaml under the active profile and asserts "
-        "each item in profiles.yaml `may_not_change` still holds."
-    )
+    from friday.config import ConfigError, get
+
+    out: list[str] = []
+    try:
+        cfg = get()
+    except ConfigError as exc:
+        return [f"configuration does not load: {exc}"]
+
+    prof = active()
+
+    # ADR-0006. The one place ingested text meets a model, and the empty tool list is the
+    # boundary - not the untrusted-content wrapping, which is mitigation.
+    scorer = cfg.agents.agents.get("scorer")
+    if scorer is None:
+        out.append("no `scorer` agent in config/agents.yaml")
+    else:
+        if scorer.tools:
+            out.append(f"scorer has tools {list(scorer.tools)}; ADR-0006 requires none")
+        if scorer.can_write:
+            out.append("scorer has can_write true; it must never write")
+
+    # ADR-0008. Four classes pin local, by config and not by preference.
+    for cls in ("vault", "health", "messages", "finances"):
+        routed = cfg.agents.sensitivity_routing.get(Sensitivity(cls))
+        if routed is None or routed.value != "local_only":
+            out.append(f"sensitivity_routing[{cls}] is {routed}; ADR-0008 requires local_only")
+
+    # Spec section 9. Every agent bounded, and an override may not have widened one.
+    for name, spec in cfg.agents.agents.items():
+        if spec.max_tokens <= 0 or spec.wall_clock_s <= 0:
+            out.append(f"agent {name} has a non-positive budget")
+        if name in prof.agent_overrides:
+            # An override names an ALIAS. If it ever grew the ability to name tools or
+            # can_write, a profile would become a way to widen an agent's permissions.
+            if not isinstance(prof.agent_overrides[name], str):
+                out.append(f"agent_overrides[{name}] is not an alias name")
+
+    # ADR-0007. The write path blocks; a queue is unbounded memory in a different file.
+    bounded = cfg.memory.bounded
+    if bounded.enabled and not bounded.block_writes_when_full:
+        out.append("memory bound does not block writes; ADR-0007 requires it")
+
+    # ADR-0004. The path the filesystem boundary is keyed on.
+    if cfg.friday.paths.core != cfg.friday.paths.agent / "core":
+        out.append("paths.core is not paths.agent/core; ADR-0004 keys on that path")
+
+    # ADR-0009.
+    if not cfg.friday.supervisor.known_good_requires_eval:
+        out.append("known_good_requires_eval is false; ADR-0009 requires it")
+
+    # Spec section 8 and 9: loopback only.
+    base = cfg.friday.models.litellm_base_url
+    if not (base.startswith("http://127.0.0.1") or base.startswith("http://localhost")):
+        out.append(f"litellm_base_url {base} is not loopback")
+
+    # ADR-0019, when the gate is on at all.
+    voice = cfg.friday.voice
+    if voice.require_speaker_match and voice.speaker_threshold < 0.65:
+        out.append(f"speaker_threshold {voice.speaker_threshold} is below the 0.65 floor")
+
+    # A profile may only serve aliases that config/litellm.yaml knows about, or nothing
+    # points at a port with no server behind it.
+    for alias in prof.served():
+        if alias not in _litellm_aliases():
+            out.append(f"profile serves alias {alias!r}, absent from config/litellm.yaml")
+
+    return out
+
+
+def _litellm_aliases(repo: Path | None = None) -> dict[str, dict[str, Any]]:
+    """The alias table from config/litellm.yaml, keyed by `model_name`."""
+    path = (repo or repo_root()) / "config" / "litellm.yaml"
+    if not path.is_file():
+        raise ConfigError(f"missing {path}")
+    data = yaml.safe_load(path.read_text()) or {}
+    out: dict[str, dict[str, Any]] = {}
+    for entry in data.get("model_list", []):
+        name = entry.get("model_name")
+        if name:
+            out[name] = entry
+    return out
 
 
 def render_litellm(out: Path) -> None:
     """Write the profile's LiteLLM config.
 
-    `config/litellm.yaml` is the alias table. This resolves each alias through the profile
-    and drops any the profile does not serve, so on dev nothing points at a port with no
-    llama-server behind it.
+    `config/litellm.yaml` is the alias table and stays the source. This resolves each alias
+    through the active profile, drops any the profile does not serve, and rewrites `api_base`
+    so two aliases backed by the same model share one llama-server.
 
-    On dev, `daily` and `fast` resolve to the same model, so both `model_name` entries point
-    at the same `api_base` and ONE llama-server serves both. That is the whole reason a
-    profile can be cheap: no calling code learns about it.
+    That last part is the whole reason a profile is cheap. On dev, `daily` and `fast` both
+    resolve to the small model, so both `model_name` entries point at port 8080 and ONE
+    server answers both. Nothing in `friday/` learns about it: callers still ask for `daily`.
 
-    Implemented in W1.
+    Fallbacks are pruned to aliases that survive. A fallback pointing at an unserved alias
+    turns a recoverable failure into a confusing one.
     """
-    raise NotImplementedError("friday.profile.render_litellm is implemented in W1")
+    prof = active()
+    table = _litellm_aliases()
+    served = prof.served()
+
+    # model -> the port of the first alias serving it. Deterministic ordering, because a
+    # rendered config that changes between runs makes a diff useless for spotting drift.
+    port_for_model: dict[str, str] = {}
+    entries: list[dict[str, Any]] = []
+
+    for alias in served:
+        model = prof.aliases[alias]
+        assert model is not None  # served() filtered these
+        src = table.get(alias)
+        if src is None:
+            raise ConfigError(
+                f"profile serves alias {alias!r}, which config/litellm.yaml does not define"
+            )
+        entry = yaml.safe_load(yaml.safe_dump(src))  # deep copy through the same loader
+        api_base = port_for_model.get(model)
+        if api_base is None:
+            api_base = entry["litellm_params"]["api_base"]
+            port_for_model[model] = api_base
+        entry["litellm_params"]["api_base"] = api_base
+        entry["litellm_params"]["model"] = f"openai/{model}"
+        entries.append(entry)
+
+    raw = yaml.safe_load(((repo_root()) / "config" / "litellm.yaml").read_text()) or {}
+    rendered: dict[str, Any] = {"model_list": entries}
+
+    router = dict(raw.get("router_settings") or {})
+    fallbacks = []
+    for fb in router.get("fallbacks") or []:
+        pruned = {k: [t for t in v if t in served] for k, v in fb.items() if k in served}
+        pruned = {k: v for k, v in pruned.items() if v}
+        if pruned:
+            fallbacks.append(pruned)
+    if fallbacks:
+        router["fallbacks"] = fallbacks
+    else:
+        router.pop("fallbacks", None)
+    if router:
+        rendered["router_settings"] = router
+
+    for key in ("litellm_settings", "general_settings"):
+        if raw.get(key):
+            rendered[key] = raw[key]
+
+    header = (
+        "# GENERATED by friday.profile.render_litellm. Do not edit.\n"
+        f"# profile: {active_name()}\n"
+        "# Source of truth is config/litellm.yaml; edit that and re-run\n"
+        "# install/04-services.sh.\n"
+    )
+    out.write_text(header + yaml.safe_dump(rendered, sort_keys=False))
 
 
 def render_llama_env(out_dir: Path) -> list[Path]:
     """Write one env file per served alias for `friday-llama@.service`.
 
-    Implemented in W1.
+    One file per *alias*, not per model. Two aliases backed by the same model on dev would
+    otherwise both want the same port, and systemd would start two servers racing for it.
+    Aliases after the first for a given model are skipped: they share the port, and
+    `render_litellm` points them at it.
+
+    Returns the files written.
     """
-    raise NotImplementedError("friday.profile.render_llama_env is implemented in W1")
+    prof = active()
+    table = _litellm_aliases()
+    written: list[Path] = []
+    seen_models: set[str] = set()
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for alias in prof.served():
+        model = prof.aliases[alias]
+        assert model is not None
+        if model in seen_models:
+            continue
+        seen_models.add(model)
+
+        api_base = table[alias]["litellm_params"]["api_base"]
+        port = api_base.rstrip("/").rsplit(":", 1)[-1].split("/")[0]
+
+        args = [f"--ctx-size {prof.llama_args.ctx_size}"]
+        if prof.llama_args.n_gpu_layers is not None:
+            args.append(f"--n-gpu-layers {prof.llama_args.n_gpu_layers}")
+        # Retrieval models are not chat models and llama-server needs telling.
+        if alias == "embed":
+            args += ["--embedding", "--pooling cls"]
+        elif alias == "rerank":
+            args.append("--reranking")
+        args.append(f"--alias {model}")
+
+        path = out_dir / f"{alias}.env"
+        path.write_text(
+            f"# GENERATED by friday.profile.render_llama_env. Do not edit.\n"
+            f"# profile: {active_name()}   alias: {alias}\n"
+            f"MODEL=/srv/friday/models/{model}.gguf\n"
+            f"PORT={port}\n"
+            f"ARGS={' '.join(args)}\n"
+        )
+        written.append(path)
+    return written
 
 
 def main() -> int:

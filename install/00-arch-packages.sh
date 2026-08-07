@@ -20,6 +20,9 @@ log "Repository packages"
 # CUDA is installed even on the dev box. It is a few hundred MB and it means moving to the
 # target machine, or dropping a card into this one, does not need a second install pass.
 PKGS=(
+  # gum drives the installer UI (install/ui.sh). Installed first in practice, because
+  # install.sh bootstraps it before anything else - listed here so a manual run gets it too.
+  gum
   base-devel git cmake ninja pkgconf
   cuda cudnn nvidia-utils
   uv python python-yaml
@@ -68,7 +71,7 @@ fi
 
 # --- Docker ------------------------------------------------------------------
 log "Docker"
-systemctl enable --now docker.service
+ui_spin "Enabling docker.service" -- systemctl enable --now docker.service
 if [[ -n "${SUDO_USER:-}" ]]; then
   usermod -aG docker "$SUDO_USER"
   warn "added $SUDO_USER to the docker group. Log out and back in for it to take effect."

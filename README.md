@@ -10,6 +10,76 @@ bug. This README is a map of the spec, not a replacement for it.
 
 Written for the person who maintains this at 3am. That person is you.
 
+## Install
+
+One command, from a bare Arch box to a running week 1:
+
+```bash
+git clone <this repo> friday && cd friday && bash install.sh
+```
+
+Do not prefix it with `sudo` — it elevates itself, and several steps (`makepkg`, `uv`) refuse
+to run as root and need to know who invoked them.
+
+It opens a dashboard showing what is done and what is not, and it is safe to quit and re-run
+at any point. Every step is idempotent, so a re-run picks up where you stopped rather than
+starting over.
+
+```
+  done   1  Packages              llama.cpp, uv, sops present
+  done   2  Service accounts      friday, fridaysup
+  done   3  Install root          /srv/friday, core owned by fridaysup
+  warn   4  Secrets               .sops.yaml still has the placeholder recipient
+  todo   5  Python env            uv, pinned 3.12
+  todo   6  Weights               profile dev
+  todo   7  Services              systemd units + rendered config
+  todo   8  Virtual keys          spec section 8, one key per agent
+```
+
+Useful variables:
+
+```bash
+FRIDAY_PROFILE=dev bash install.sh     # pick the profile up front
+FRIDAY_YES=1       bash install.sh     # no prompts, for a re-run
+FRIDAY_STEP=models bash install.sh     # run one step and stop
+```
+
+The installer covers **week 1 only**. Weeks 2 through 8 are deliberately manual, because each
+one has a gate you have to look at — an eval score, a latency measurement, a security check
+you should see fail before you see it pass. See [`docs/weeks/`](docs/weeks/).
+
+### Manual installation
+
+The installer is a front end over `install/*.sh`. Running them by hand is a supported path,
+not a fallback, and it is what [`docs/weeks/W1.md`](docs/weeks/W1.md) documents step by step.
+
+```bash
+sudo bash install/00-arch-packages.sh    # pacman + paru + docker
+sudo bash install/01-users.sh            # friday, fridaysup, the polkit rule
+sudo bash install/tree.sh                # spec section 11 install root
+# secrets: age-keygen, set the .sops.yaml recipient, encrypt the LiteLLM master key
+sudo bash install/02-python-env.sh       # uv, pinned 3.12, validates config
+sudo bash install/03-models.sh           # weights for the active profile
+sudo bash install/04-services.sh         # units + rendered config, behind two gates
+sudo bash install/05-litellm-keys.sh     # one virtual key per agent
+```
+
+Then, still by hand and covered in W1: OpenJarvis, the mesh, Conduit and one bridge, Hermes.
+
+Check the box at any time. It reads and changes nothing, which is why the supervisor also
+runs it as a health check every 30 seconds:
+
+```bash
+make preflight
+```
+
+Two things worth knowing before you start. **`install/03-models.sh` refuses to run** while any
+model repository is still a `# VERIFY:` placeholder — spec §1 says verify current picks
+before downloading, and a confidently wrong repo id wastes more of an evening than a marker
+telling you to look. And **`install/04-services.sh` installs nothing** unless the config
+validates and the active profile has not relaxed a security invariant. A box that refuses to
+start is better than one that starts with a boundary quietly off.
+
 ## Requirements
 
 Two hardware profiles, and the same repository runs on both. Nothing in the architecture

@@ -18,7 +18,9 @@ WorkingDirectory=/srv/friday
 # The master key exists to MINT per-agent virtual keys and for nothing else (spec section 8).
 # It arrives decrypted by a helper the agent cannot read - ADR-0005, capabilities not
 # credentials - and never as a literal in this file.
-ExecStartPre=/srv/friday/bin/secret-helper litellm-env /run/friday/litellm.env
+# '+' runs this one line as root. The helper must read root-owned
+# secrets; the service itself must not. ADR-0005.
+ExecStartPre=+/srv/friday/bin/secret-helper litellm-env /run/friday/litellm.env
 EnvironmentFile=/run/friday/litellm.env
 RuntimeDirectory=friday
 RuntimeDirectoryMode=0700

@@ -18,7 +18,9 @@ WorkingDirectory=/srv/friday
 
 # Per-agent virtual key, never the master key. Spec section 8: Hermes shipped a hardening
 # release specifically patching a LiteLLM credential exposure.
-ExecStartPre=/srv/friday/bin/secret-helper agent-key hermes /run/friday/hermes.env
+# '+' runs this one line as root. The helper must read root-owned
+# secrets; the service itself must not. ADR-0005.
+ExecStartPre=+/srv/friday/bin/secret-helper agent-key hermes /run/friday/hermes.env
 EnvironmentFile=/run/friday/hermes.env
 RuntimeDirectory=friday
 RuntimeDirectoryMode=0700
