@@ -35,6 +35,7 @@ Format: Context / Decision / Consequences / Date.
 | 0019 | Barge-in: stop acoustically, classify semantically, suspend rather than kill | spec §5, §6 | Accepted |
 | 0020 | Vision and IoT defer past W8; ambient means one room first | **reorders spec §6** | Accepted |
 | 0021 | ADR-0003 re-examined: OpenAGI stays out, for ADR-0001 and not for the licence | **amends ADR-0003** | Accepted |
+| 0022 | OpenAGI does not replace Hermes | spec §1, §7 | Accepted |
 
 ---
 
@@ -1150,5 +1151,72 @@ dependency.
   so this decision is also the durable one. That is a consequence rather than the reason.
 - If OpenAGI ever ships Adaptive Scrutiny as a standalone library with no daemon, this ADR is
   superseded rather than edited, and the only remaining question would be the licence.
+
+**Date**: 2026-08-07
+
+---
+
+## ADR-0022: OpenAGI does not replace Hermes
+
+**Context**
+
+OpenAGI's own comparison table shows it beating Hermes Agent on six rows. The question is
+whether it should take the messaging and user-model slot.
+
+The table is the vendor's marketing page. Spec §4 flagged this pattern about OpenAGI
+specifically — "content marketing, same as the Vellum posts" — and a vendor's own comparison
+is the strongest form of it, because the rows are selected rather than surveyed.
+
+Checked against what the projects do:
+
+| Row OpenAGI wins | What is actually true |
+|---|---|
+| Adaptive Scrutiny decision layer | Ours already. `scrutiny/policy.py`, 45 tests passing. Not an argument about Hermes |
+| Persistent specialists (propagation) | Ours already. `propagate` plus the graph layer plus per-agent budgets |
+| Corrections lock in, never repeat | Ours already. The ratchet, ADR-0013 |
+| Watches you, learns patterns | Real and distinctive. Also an always-on process observing the screen of the machine that holds the mail, the messages and the finances |
+
+Three of the four are rows this project fills itself, so they cannot be reasons to change a
+different layer's owner.
+
+**The row that decides it is scored as a tie.** "Multi-channel (SMS / Telegram / HTTP)" marks
+both ✓. OpenAGI has roughly five channels. Hermes has 23, and that list contains **Matrix,
+Signal, WhatsApp, iMessage and email**.
+
+Spec §1 gives Matrix the messages-in row and calls it "the whole answer to 'it knows my
+messages'." W1 and W2 route entirely through Conduit and mautrix bridges into Hermes. OpenAGI
+ships no Matrix gateway, so adopting it does not swap a messaging layer, it deletes one.
+
+Three further things Hermes carries that the table has no row for:
+
+- **Honcho** produces the `profile.md` proposals. Spec §7, tier 1.
+- **ADR-0007 is Hermes's design.** Spec §7 says so in as many words: "Hermes's design — when
+  memory fills, the agent must consolidate before it can save anything new — is better than
+  nightly compression. Adopt it." Bounded memory is imported from this project.
+- **The Curator** is half of W8, and spec §8 configures it by name.
+
+**Decision**
+
+Hermes keeps the messaging and user-model row. OpenAGI does not replace it.
+
+The trade on offer is: lose Matrix, Honcho, the bounded-memory design and the Curator; gain
+screen observation and three capabilities already owned. ADR-0001's test — either the feature
+belongs in the incumbent, or the incumbent is wrong and should be replaced — is not close to
+met.
+
+**One thing is taken.** Pattern detection from observing what you do is the genuinely novel
+capability here, and it is the proactive half of what an ambient assistant is for. It enters
+as a **source**, not a layer, and since it is screen observation it belongs with the vision
+work ADR-0020 deferred past W8. When it is built, it is an ingest module feeding scored
+signals like any other source, and it is subject to the same untrusted-content handling.
+
+That is also where `repetition` earns its place as an axis, which is ADR-0014 and still open.
+
+**Consequences**
+
+- A vendor comparison table is not evidence about a layer this project already owns. When one
+  argues for a change, the check is which rows are ours already and which rows were left out.
+- Screen observation, whenever it arrives, is the largest new attack surface proposed so far.
+  It gets an ADR of its own and it is measured against ADR-0006.
 
 **Date**: 2026-08-07
