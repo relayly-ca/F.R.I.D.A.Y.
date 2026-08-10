@@ -1,0 +1,42 @@
+# FRIDAY supervisor. Spec section 9: ~150 lines, different user, outside her reach.
+#
+# The supervisor runs as fridaysup and manages friday-* units via a polkit rule
+# that grants it exactly those and nothing else. It cannot manage
+# friday-supervisor.service itself, so nothing it supervises can stop it.
+#
+# ADR-0004: the supervisor deliberately carries LESS sandboxing than the units it
+# supervises. Sandboxing the guard alongside the guarded defeats it.
+
+[Unit]
+Description=FRIDAY supervisor
+Documentation=file:///srv/friday/docs/weeks/W5.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fridaysup
+Group=fridaysup
+WorkingDirectory=/srv/friday
+
+ExecStart=/srv/friday/.venv/bin/python -m supervisor.main
+
+# The supervisor needs to manage friday-* units (systemctl), read agent/core/,
+# and run git checkout for reverts. It does NOT need network egress or the GPU.
+# Less restriction than the units it supervises is deliberate (ADR-0004).
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/friday/logs /srv/friday/db /srv/friday/work
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Restart aggressively — the supervisor must always be running.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,46 @@
+# FRIDAY wall surface. Spec section 1: "Agent state, running graphs, pending gates.
+# Renders; never commands."
+#
+# A web dashboard. Read-only by design — it shows service state, agent configs,
+# running graphs, pending human gates, and scrutiny decisions. It sends no
+# commands to anything.
+
+[Unit]
+Description=FRIDAY wall surface (dashboard)
+Documentation=file:///srv/friday/docs/spec/FRIDAY-final-spec.md
+After=network-online.target friday-litellm.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=friday
+Group=friday
+WorkingDirectory=/srv/friday
+
+ExecStartPre=+/srv/friday/bin/secret-helper agent-key conversation /run/friday/wall.env
+EnvironmentFile=/run/friday/wall.env
+RuntimeDirectory=friday
+RuntimeDirectoryMode=0700
+
+ExecStart=/srv/friday/.venv/bin/python -m friday.wall --port 8088
+
+# Loopback only. Spec section 9: never a port forward. The phone reaches
+# the wall over the mesh or it does not reach it.
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/friday/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

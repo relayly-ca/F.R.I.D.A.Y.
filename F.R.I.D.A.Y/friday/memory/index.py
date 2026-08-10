@@ -16,8 +16,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
-
 from friday.config import get
 from friday.models import Chunk, Sensitivity
 
@@ -209,6 +207,9 @@ def rerank(query: str, chunks: list[Chunk]) -> list[tuple[Chunk, float]]:
         return []
 
     documents = [c.text for c in chunks]
+
+    # Use the OpenAI rerank-compatible endpoint (LiteLLM proxy supports this)
+    import httpx
 
     base_url = cfg.friday.models.litellm_base_url
     if not base_url.endswith("/v1"):

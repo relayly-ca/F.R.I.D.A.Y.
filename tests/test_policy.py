@@ -407,12 +407,11 @@ def test_score_is_frozen() -> None:
 # ---------------------------------------------------------------------------
 # Week 7.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(reason="policy.load_table is implemented in week 7", raises=NotImplementedError)
 def test_load_table_matches_fixture(table: RuleTable) -> None:
     """When load_table lands it must produce exactly the fixture these tests use.
 
-    xfail today, passes in week 7 with no edit. If it ever xpasses, load_table is done and
-    the marker should come off.
+    Week 7: load_table is implemented. This test verifies it produces the same table
+    as the in-process fixture used by the rest of the suite.
     """
     from scrutiny.policy import load_table
 

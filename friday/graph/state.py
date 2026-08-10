@@ -91,14 +91,32 @@ class GraphState(BaseModel):
     # Set when a barge-in or a kill suspended this run in favour of something else.
     suspended_for: str | None = None
 
-    def spend(self, tokens: int) -> None:
+    def spend(self, tokens: int, *, node: str | None = None, agent: str | None = None) -> None:
         """Record token spend from a node.
 
+        Appends a NodeRecord to history and updates the ``tokens_spent`` aggregate.
+        Does NOT enforce a ceiling — the supervisor does that, from outside, as a different
+        user (spec section 9). A budget the budgeted process enforces on itself is a
+        suggestion.
+
+        Args:
+            tokens: Tokens consumed by the node execution.
+            node: Name of the node that spent the tokens, recorded in the NodeRecord.
+            agent: Agent that ran the node, recorded in the NodeRecord.
+
         Raises:
-            NotImplementedError: W5.
+            ValueError: ``tokens`` is negative.
         """
-        raise NotImplementedError(
-            "friday.graph.state.GraphState.spend is implemented in W5. It appends to history "
-            "and updates the aggregate; it does NOT enforce a ceiling - the supervisor does "
-            "that, from outside, as a different user."
+        if tokens < 0:
+            raise ValueError("tokens must be non-negative")
+        now = datetime.now()
+        self.history.append(
+            NodeRecord(
+                node=node or self.cursor or "unknown",
+                started_at=now,
+                ended_at=now,
+                tokens=tokens,
+                agent=agent,
+            )
         )
+        self.tokens_spent += tokens

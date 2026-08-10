@@ -186,17 +186,16 @@ def from_sources(since: datetime | None = None, dry_run: bool = False) -> int:
 
     for row in rows:
         try:
-            row_d = dict(row)
             event = Event(
-                source=row_d["source"],
-                external_id=row_d["external_id"],
-                occurred_at=datetime.fromisoformat(row_d["occurred_at"]),
-                body=row_d["body"],
-                sensitivity=Sensitivity(row_d["sensitivity"]),
-                untrusted=bool(row_d.get("untrusted", True)),
-                meta=row_d.get("meta", {}) if isinstance(row_d.get("meta"), dict) else {},
-                ingested_at=datetime.fromisoformat(row_d["ingested_at"])
-                if row_d.get("ingested_at")
+                source=row["source"],
+                external_id=row["external_id"],
+                occurred_at=datetime.fromisoformat(row["occurred_at"]),
+                body=row["body"],
+                sensitivity=Sensitivity(row["sensitivity"]),
+                untrusted=bool(row.get("untrusted", True)),
+                meta=row["meta"] if isinstance(row["meta"], dict) else {},
+                ingested_at=datetime.fromisoformat(row["ingested_at"])
+                if row["ingested_at"]
                 else None,
             )
         except Exception as e:

@@ -23,11 +23,13 @@ enough to read in one sitting is what makes the triage layer auditable.
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping
+from pathlib import Path
+from typing import Any
 
-from scrutiny.score import Score
+from scrutiny.score import AXES, Score
 
 
 class Action(Enum):
@@ -214,7 +216,7 @@ def evaluate(expression: str, env: Mapping[str, Any]) -> bool:
 def decide(
     score: Score,
     context: Mapping[str, Any] | None = None,
-    table: "RuleTable | None" = None,
+    table: RuleTable | None = None,
 ) -> Decision:
     """Map a score plus context to one of five actions, deterministically.
 
@@ -298,8 +300,82 @@ def load_table(path: str | None = None) -> RuleTable:
     Implemented in week 7 alongside the scorer. The parsing and validation above is the
     whole of it; there is no clever loading to write.
     """
-    raise NotImplementedError(
-        "scrutiny.policy.load_table is implemented in week 7. "
-        "Pass an explicit RuleTable to decide() until then; the dispatch logic above is "
-        "complete and tests/test_policy.py exercises it against a table built in-process."
-    )
+    import yaml
+
+    if path is None:
+        from friday.config import get
+
+        path = str(get().scrutiny_path)
+
+    try:
+        raw = yaml.safe_load(Path(path).read_text())
+    except Exception as exc:
+        raise PolicyError(f"cannot read scrutiny config {path}: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise PolicyError(f"scrutiny config must be a mapping, got {type(raw).__name__}")
+
+    thresholds = raw.get("thresholds")
+    if not isinstance(thresholds, dict):
+        raise PolicyError("scrutiny config missing `thresholds` mapping")
+    # Thresholds are floats; coerce and validate.
+    typed_thresholds: dict[str, float] = {}
+    for k, v in thresholds.items():
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            raise PolicyError(f"threshold {k!r} must be a number, got {type(v).__name__}")
+        typed_thresholds[k] = float(v)
+
+    raw_rules = raw.get("rules")
+    if not isinstance(raw_rules, list):
+        raise PolicyError("scrutiny config missing `rules` list")
+
+    rules: list[Rule] = []
+    names: set[str] = set()
+    env_for_parse = {
+        **{a: 0.5 for a in AXES},
+        "conflict": False,
+        "thresholds": typed_thresholds,
+        "context": {},
+    }
+
+    for i, r in enumerate(raw_rules):
+        if not isinstance(r, dict):
+            raise PolicyError(f"rule #{i} is not a mapping")
+
+        name = r.get("name")
+        if not name or not isinstance(name, str):
+            raise PolicyError(f"rule #{i} has no name; every decision must name its rule")
+        if name in names:
+            raise PolicyError(f"duplicate rule name {name!r}; decisions key on names")
+        names.add(name)
+
+        when = r.get("when")
+        if not when or not isinstance(when, str):
+            raise PolicyError(f"rule {name!r} has no `when` expression")
+
+        action_str = r.get("action")
+        if not action_str or not isinstance(action_str, str):
+            raise PolicyError(f"rule {name!r} has no action")
+        try:
+            action = Action(action_str)
+        except ValueError:
+            raise PolicyError(
+                f"rule {name!r} action {action_str!r} is not one of {sorted(a.value for a in Action)}"
+            )
+
+        why = r.get("why", "")
+
+        # Validate the expression parses under the restricted grammar right now,
+        # not at first use.
+        evaluate(when, env_for_parse)
+
+        rules.append(Rule(name=name, when=when, action=action, why=why))
+
+    # A floor rule must exist so no decision can ever lack a rule name.
+    if "floor" not in names:
+        raise PolicyError(
+            "no `floor` rule in the table. Every decision must name the rule that produced "
+            "it; restore the explicit floor in config/scrutiny.yaml."
+        )
+
+    return RuleTable(thresholds=typed_thresholds, rules=tuple(rules))

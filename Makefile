@@ -77,6 +77,9 @@ status: ## One line per friday-* unit
 logs: ## Follow logs across every friday-* unit
 	@journalctl -f -n 200 $(foreach u,$(UNITS),-u $(u))
 
+wall: ## Launch the wall surface (web dashboard) on :8088
+	@$(UV) run python -m friday.wall --port 8088
+
 eval: ## Retrieval eval. Gate for week 2-3, and the gate on the known-good tag.
 	@if [[ -f eval/questions.yaml ]]; then \
 		$(UV) run python eval/run_eval.py --questions eval/questions.yaml; \

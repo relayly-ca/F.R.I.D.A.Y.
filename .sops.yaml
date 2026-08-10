@@ -16,7 +16,7 @@
 # Then replace the placeholder below. install/preflight.sh fails while it is still there.
 
 keys:
-  - &friday_host age1REPLACE_WITH_YOUR_AGE_PUBLIC_KEY
+  - &friday_host age17lpw7lrfu86hf42xge5dzxae73nt2mgpeupdadx8x3uryr5ht5askelfsk
 
 creation_rules:
   # Per-unit environment files consumed via systemd EnvironmentFile=.

@@ -329,10 +329,10 @@ def render(markdown: bool = False) -> str:
             f"raises `NotImplementedError` naming the phase that implements it, so this "
             f"cannot drift from the code.",
             "",
-            f"Work left counts *stubs*, so a dash means nothing is stubbed — which is not "
-            f"the same as finished. W1 has no stubs because `friday/ingest/` and "
-            f"`friday/cli.py` have not been written at all. The **Your box** column is the "
-            f"one that answers whether a phase is actually done.",
+            "Work left counts *stubs*, so a dash means nothing is stubbed — which is not "
+            "the same as finished. W1 has no stubs because `friday/ingest/` and "
+            "`friday/cli.py` have not been written at all. The **Your box** column is the "
+            "one that answers whether a phase is actually done.",
             "",
             "`make status` reports the same thing for **your** box.",
         ]
