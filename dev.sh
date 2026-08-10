@@ -26,11 +26,11 @@ mkdir -p "$MODELS_DIR" "$PID_DIR" "$LOG_DIR" "$DB_DIR" "$VAULT_DIR"
 # --- Colors and UI -----------------------------------------------------------
 if command -v gum &>/dev/null; then
   HAVE_GUM=1
-  header() { gum style --border rounded --padding "0 1" --foreground 212 "$1"; }
-  info()  { gum style --foreground 39 "$1"; }
-  warn()  { gum style --foreground 208 "$1"; }
-  err()   { gum style --foreground 196 "$1"; }
-  ok()    { gum style --foreground 76 "$1"; }
+  header() { gum style --border rounded --padding "0 1" --foreground 212 -- "$1"; }
+  info()  { gum style --foreground 39 -- "$1"; }
+  warn()  { gum style --foreground 208 -- "$1"; }
+  err()   { gum style --foreground 196 -- "$1"; }
+  ok()    { gum style --foreground 76 -- "$1"; }
 else
   HAVE_GUM=0
   header() { echo "=== $1 ==="; }
@@ -113,7 +113,6 @@ litellm_settings:
   drop_params: true
 
 general_settings:
-  master_key: sk-friday-dev-key-not-for-production
   telemetry: false
 YAML
   echo "$cfg"

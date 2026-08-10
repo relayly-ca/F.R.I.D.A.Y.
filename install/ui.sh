@@ -30,7 +30,7 @@ _plain() { printf '%s\n' "$*"; }
 ui_banner() {
   if [[ $UI_HAS_GUM -eq 1 ]]; then
     gum style --border double --border-foreground "$UI_ACCENT" \
-      --align center --width 68 --margin "1 0" --padding "1 2" \
+      --align center --width 68 --margin "1 0" --padding "1 2" -- \
       "FRIDAY" "$1"
   else
     printf '\n========================================================\n'
@@ -41,8 +41,8 @@ ui_banner() {
 
 ui_header() {
   if [[ $UI_HAS_GUM -eq 1 ]]; then
-    gum style --foreground "$UI_ACCENT" --bold --margin "1 0 0 0" "$*"
-    gum style --foreground "$UI_DIM" "$(printf '%.0s-' {1..64})"
+    gum style --foreground "$UI_ACCENT" --bold --margin "1 0 0 0" -- "$*"
+    gum style --foreground "$UI_DIM" -- "$(printf '%.0s-' {1..64})"
   else
     printf '\n=== %s\n' "$*"
   fi
@@ -50,7 +50,7 @@ ui_header() {
 
 ui_rule() {
   [[ $UI_HAS_GUM -eq 1 ]] \
-    && gum style --foreground "$UI_DIM" "$(printf '%.0s-' {1..64})" \
+    && gum style --foreground "$UI_DIM" -- "$(printf '%.0s-' {1..64})" \
     || printf -- '----------------------------------------------------------------\n'
 }
 
@@ -64,7 +64,7 @@ ui_err()  { [[ $UI_HAS_GUM -eq 1 ]] && gum log --level error "$*" || _plain "  E
 
 ui_note() {
   [[ $UI_HAS_GUM -eq 1 ]] \
-    && gum style --foreground "$UI_DIM" --margin "0 0 0 2" "$*" \
+    && gum style --foreground "$UI_DIM" --margin "0 0 0 2" -- "$*" \
     || printf '    %s\n' "$*"
 }
 
@@ -97,9 +97,9 @@ ui_status() {
   esac
   if [[ $UI_HAS_GUM -eq 1 ]]; then
     gum join --horizontal \
-      "$(gum style --foreground "$colour" --width 8 "  $mark")" \
-      "$(gum style --width 30 "$label")" \
-      "$(gum style --foreground "$UI_DIM" "$detail")"
+      "$(gum style --foreground "$colour" --width 8 -- "  $mark")" \
+      "$(gum style --width 30 -- "$label")" \
+      "$(gum style --foreground "$UI_DIM" -- "$detail")"
   else
     printf '  %-6s %-30s %s\n' "$mark" "$label" "$detail"
   fi
@@ -126,7 +126,7 @@ ui_confirm() {
 ui_choose() {
   local header="$1"; shift
   if [[ $UI_HAS_GUM -eq 1 ]]; then
-    gum choose --header "$header" --height 12 "$@"
+    gum choose --header "$header" --height 12 -- "$@"
   else
     printf '%s\n' "$header" >&2
     local i=1; for o in "$@"; do printf '  %d) %s\n' "$i" "$o" >&2; ((i++)); done
@@ -187,7 +187,7 @@ ui_summary() {
   local title="$1"; shift
   if [[ $UI_HAS_GUM -eq 1 ]]; then
     gum style --border rounded --border-foreground "$UI_ACCENT" \
-      --padding "1 2" --margin "1 0" --width 68 "$title" "" "$@"
+      --padding "1 2" --margin "1 0" --width 68 -- "$title" "" "$@"
   else
     printf '\n--- %s ---\n' "$title"
     printf '%s\n' "$@"
